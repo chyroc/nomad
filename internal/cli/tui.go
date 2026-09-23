@@ -197,6 +197,20 @@ func (a *App) onInteractiveEvent(ev loop.Event) {
 	if transcript != nil && a.sessionID != "" {
 		_ = transcript.Append(a.sessionID, ev)
 	}
+	fn := func() {
+		a.renderInteractiveEvent(ev)
+	}
+	a.modalMu.Lock()
+	if a.modalActive {
+		a.modalPending = append(a.modalPending, fn)
+		a.modalMu.Unlock()
+		return
+	}
+	a.modalMu.Unlock()
+	fn()
+}
+
+func (a *App) renderInteractiveEvent(ev loop.Event) {
 	switch ev.Kind {
 	case loop.EvAssistantThinking:
 		if a.thinkingStart.IsZero() {

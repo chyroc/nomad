@@ -58,6 +58,10 @@ type App struct {
 	thinkingBuf   strings.Builder
 	thinkingStart time.Time
 
+	modalMu      sync.Mutex
+	modalActive  bool
+	modalPending []func()
+
 	foldMu     sync.Mutex
 	folds      map[int]*foldBlock
 	foldOrder  []int
@@ -65,6 +69,24 @@ type App struct {
 	nextFoldID int
 	screenRow  int
 	mouseOn    bool
+}
+
+// withModal buffers event rendering while an inline modal (permission
+// picker) is on screen, then replays it in order after the modal closes.
+func (a *App) withModal(run func() string) string {
+	a.modalMu.Lock()
+	a.modalActive = true
+	a.modalMu.Unlock()
+	answer := run()
+	a.modalMu.Lock()
+	a.modalActive = false
+	pending := a.modalPending
+	a.modalPending = nil
+	a.modalMu.Unlock()
+	for _, fn := range pending {
+		fn()
+	}
+	return answer
 }
 
 // New constructs the app (no network yet).
