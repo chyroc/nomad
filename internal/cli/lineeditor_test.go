@@ -78,3 +78,9 @@ func TestWordMotion(t *testing.T) {
 		t.Errorf("wordRight(0)=%d want 5", got)
 	}
 }
+
+func TestCtrlKeys(t *testing.T) {
+	if got := wordLeft([]rune("a b"), 3); got != 2 {
+		t.Errorf("wordLeft boundary = %d want 2", got)
+	}
+}

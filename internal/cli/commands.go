@@ -383,7 +383,7 @@ func (a *App) cmdInit() error {
 func (a *App) cmdConfig(arg string) {
 	if strings.TrimSpace(arg) == "" {
 		a.printf("model: %s\npermission: %s\neffort: %s\nworkspace: %s\n", a.model, a.opts.PermissionMode, a.opts.ReasoningEffort, a.paths.Workspace)
-		a.printf("%sset values with /config <key=value> (supported: model, permission)%s\n", cDim, cReset)
+		a.printf("%sset values with /config <key=value> (supported: model, permission, effort)%s\n", cDim, cReset)
 		return
 	}
 	kv := strings.SplitN(strings.TrimSpace(arg), "=", 2)
