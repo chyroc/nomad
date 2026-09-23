@@ -238,16 +238,24 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 					continue
 				}
 				if r3 == '2' {
-					rest := make([]rune, 0, 3)
-					rest = append(rest, mustRune(e.in), mustRune(e.in), mustRune(e.in))
-					switch string(rest) {
-					case "00~":
-						pasting = true
-						continue
-					case "01~":
-						pasting = false
-						continue
+					param := []rune{r3}
+					for {
+						rn, _, err := e.in.ReadRune()
+						if err != nil {
+							break
+						}
+						if rn == '~' {
+							break
+						}
+						param = append(param, rn)
 					}
+					switch string(param) {
+					case "200", "2004":
+						pasting = true
+					case "201":
+						pasting = false
+					}
+					continue
 				}
 				switch r3 {
 				case 'A':
@@ -304,11 +312,6 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 }
 
 func (e *lineEditor) History() []string { return e.history }
-
-func mustRune(in *bufio.Reader) rune {
-	r, _, _ := in.ReadRune()
-	return r
-}
 
 func normalizePasted(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
