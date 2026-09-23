@@ -200,12 +200,19 @@ func (p *picker) RunFull() (pickResult, bool) {
 		if anchor < 1 {
 			anchor = 1
 		}
+		clearTop := panelTop
+		if clearTop == 0 {
+			clearTop = anchor
+		}
+		if anchor < clearTop {
+			clearTop = anchor
+		}
 		panelTop = anchor
 		top = scrollWindow(total, shown, sel, top)
 
 		var sb strings.Builder
 		sb.WriteString("\x1b[?25l")
-		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[J", anchor))
+		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[J", clearTop))
 		row := anchor
 		if p.title != "" {
 			sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m", row))
