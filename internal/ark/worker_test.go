@@ -48,3 +48,20 @@ func TestGatedTool_Deny(t *testing.T) {
 		t.Fatalf("denied tool must not execute: %+v calls=%d", r, ft.calls)
 	}
 }
+
+func TestDecidePermissionSessionAllow(t *testing.T) {
+	ask := func(string, string) string { return "session" }
+	allowed, denied := decidePermission(PermDefault, nil, nil, nil, ask, "write", json.RawMessage(`{}`))
+	if !allowed || denied != "" {
+		t.Fatalf("first session answer should allow: %v %q", allowed, denied)
+	}
+	sessionMap := map[string]bool{"write": true}
+	allowed, denied = decidePermission(PermDefault, nil, nil, sessionMap, ask, "write", json.RawMessage(`{}`))
+	if !allowed || denied != "" {
+		t.Fatalf("session-remembered tool should allow without asking")
+	}
+	allowed, _ = decidePermission(PermDefault, nil, nil, sessionMap, nil, "bash", json.RawMessage(`{}`))
+	if allowed {
+		t.Fatalf("other tools should not be implicitly allowed")
+	}
+}

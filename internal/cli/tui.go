@@ -362,16 +362,7 @@ func (a *App) replay(evs []loop.Event) {
 // askToolPermission is the interactive permission callback (default mode).
 func (a *App) askToolPermission(name, args string) string {
 	a.stopSpinner()
-	a.printf("%s允许工具 %s(%s)?%s [y/N] ", cYellow, name, oneLine(args, 80), cReset)
-	line, err := a.editor.ReadLine("")
-	if err != nil {
-		return "deny"
-	}
-	line = strings.TrimSpace(strings.ToLower(line))
-	if line == "y" || line == "yes" || line == "allow" {
-		return "allow"
-	}
-	return "deny"
+	return a.askPermissionChoice(name, oneLine(args, 100))
 }
 
 func (a *App) startSpinner() {

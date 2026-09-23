@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/volcengine/ark-runtime-go/arkruntime/model/session"
@@ -86,8 +87,26 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		perm = PermBypass
 	}
 	allowed, disallowed := o.AllowedTools, o.Disallowed
+	var sessionMu sync.Mutex
+	sessionAllowed := map[string]bool{}
+	var ask func(string, string) string
+	if o.Ask != nil {
+		ask = func(name, args string) string {
+			answer := o.Ask(name, args)
+			if strings.EqualFold(strings.TrimSpace(answer), "session") {
+				sessionMu.Lock()
+				sessionAllowed[name] = true
+				sessionMu.Unlock()
+				return "allow"
+			}
+			return answer
+		}
+	}
 	decide := func(name string, input json.RawMessage) (bool, string) {
-		return decidePermission(perm, allowed, disallowed, o.Ask, name, input)
+		sessionMu.Lock()
+		sess := sessionAllowed
+		sessionMu.Unlock()
+		return decidePermission(perm, allowed, disallowed, sess, ask, name, input)
 	}
 	tools, err := newGatedToolSet(o.Workspace, toolTimeout, decide, o.MaxToolTurns)
 	if err != nil {

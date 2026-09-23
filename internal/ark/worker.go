@@ -76,17 +76,30 @@ func newGatedToolSet(workspace string, toolTimeout time.Duration, decide func(st
 	return set, nil
 }
 
+// Permission answers returned by an interactive Ask callback.
+const (
+	AnswerDeny    = "deny"
+	AnswerAllow   = "allow"
+	AnswerOnce    = "once"
+	AnswerSession = "session"
+)
+
 // decidePermission implements the permission policy decision.
 func decidePermission(
 	mode PermissionMode,
 	allowed, disallowed map[string]bool,
+	sessionAllowed map[string]bool,
 	ask func(string, string) string,
-	name string, input json.RawMessage,
+	name string,
+	input json.RawMessage,
 ) (bool, string) {
 	if disallowed[name] {
 		return false, "tool is disabled"
 	}
 	if len(allowed) > 0 && allowed[name] {
+		return true, ""
+	}
+	if len(sessionAllowed) > 0 && sessionAllowed[name] {
 		return true, ""
 	}
 	switch mode {
@@ -112,8 +125,8 @@ func decidePermission(
 	if ask == nil {
 		return false, "non-interactive session denied tool (use --permission-mode bypassPermissions to allow)"
 	}
-	answer := ask(name, compactArgs(input))
-	if strings.EqualFold(strings.TrimSpace(answer), "allow") || answer == "y" {
+	switch strings.ToLower(strings.TrimSpace(ask(name, compactArgs(input)))) {
+	case AnswerAllow, AnswerOnce, AnswerSession, "y", "yes":
 		return true, ""
 	}
 	return false, "user denied tool execution"
