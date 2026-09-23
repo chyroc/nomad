@@ -70,12 +70,17 @@ func New(opts Options, in io.Reader, out io.Writer) *App {
 	for _, d := range opts.AddDirs {
 		_ = d
 	}
+	interactive := isTerminal(out) && opts.OutputFormat == FormatText && !opts.Print
+	wrapped := newProfileWriter(out)
+	if fd := fdOf(wrapped); fd >= 0 {
+		startSizeWatcher(fd)
+	}
 	return &App{
 		paths: paths,
 		opts:  opts,
 		in:    in,
-		out:   out,
-		color: isTerminal(out) && opts.OutputFormat == FormatText && !opts.Print,
+		out:   wrapped,
+		color: interactive,
 	}
 }
 

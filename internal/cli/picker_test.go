@@ -110,3 +110,37 @@ func TestSlashUnique(t *testing.T) {
 		t.Fatalf("ambiguous /mo must not auto-complete, got %q", got)
 	}
 }
+
+func TestFuzzyScore(t *testing.T) {
+	cases := []struct {
+		pattern, target string
+		wantMatch       bool
+	}{
+		{"dsp", "deepseek-v4-pro", true},
+		{"pro", "deepseek-v4-pro", true},
+		{"zzz", "deepseek-v4-pro", false},
+		{"dp", "doubao-seed-2-1-pro", true},
+	}
+	for _, c := range cases {
+		_, ok := fuzzyScore(c.pattern, c.target)
+		if ok != c.wantMatch {
+			t.Errorf("fuzzyScore(%q,%q) match=%v want %v", c.pattern, c.target, ok, c.wantMatch)
+		}
+	}
+}
+
+func TestFilterPickItemsRanks(t *testing.T) {
+	items := []pickItem{
+		{id: "x", label: "doubao-seed-evolving"},
+		{id: "y", label: "doubao-seed-2-1-pro"},
+		{id: "z", label: "deepseek-v4-pro"},
+	}
+	got := filterPickItems(items, "dvp")
+	if len(got) != 1 || got[0].label != "deepseek-v4-pro" {
+		t.Fatalf("dvp should match only deepseek-v4-pro, got %+v", got)
+	}
+	got = filterPickItems(items, "deepseek")
+	if len(got) != 1 || got[0].label != "deepseek-v4-pro" {
+		t.Fatalf("deepseek prefix should match one, got %+v", got)
+	}
+}

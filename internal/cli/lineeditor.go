@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
@@ -39,10 +40,7 @@ func newLineEditor(in io.Reader, out io.Writer, history []string) *lineEditor {
 func (e *lineEditor) setCompleter(f func(string) []string) { e.completer = f }
 
 func (e *lineEditor) width() int {
-	if e.fd < 0 {
-		return 80
-	}
-	if _, w, err := term.GetSize(e.fd); err == nil && w > 0 {
+	if w, _ := cachedTermSize(); w > 0 {
 		return w
 	}
 	return 80
@@ -320,51 +318,8 @@ func normalizePasted(s string) string {
 }
 
 func visiblePromptWidth(s string) int {
-	return runewidth.StringWidth(stripANSI(s))
+	return ansi.StringWidthWc(s)
 }
-
-func stripANSI(s string) string {
-	var b strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] != 0x1b {
-			b.WriteByte(s[i])
-			i++
-			continue
-		}
-		j := i + 1
-		if j < len(s) {
-			switch s[j] {
-			case '[', '?':
-				j++
-				for j < len(s) && !isCSIFinal(s[j]) {
-					j++
-				}
-				if j < len(s) {
-					j++
-				}
-			case ']':
-				j++
-				for j < len(s) && s[j] != 0x07 && !(s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\') {
-					j++
-				}
-				if j < len(s) {
-					if s[j] == 0x1b {
-						j += 2
-					} else {
-						j++
-					}
-				}
-			default:
-				j++
-			}
-		}
-		i = j
-	}
-	return b.String()
-}
-
-func isCSIFinal(c byte) bool { return c >= 0x40 && c <= 0x7e }
 
 func indexAtWidth(s string, target int) (int, int) {
 	w, idx := 0, 0
@@ -380,17 +335,7 @@ func indexAtWidth(s string, target int) (int, int) {
 }
 
 func truncateToWidth(s string, width int) string {
-	w := 0
-	var b strings.Builder
-	for _, r := range s {
-		cw := runewidth.RuneWidth(r)
-		if w+cw > width {
-			break
-		}
-		b.WriteRune(r)
-		w += cw
-	}
-	return b.String()
+	return ansi.TruncateWc(s, width, "")
 }
 
 func itoa(n int) string {
@@ -432,7 +377,7 @@ func slashHints(complete func(string) []string, line string) []string {
 func stripAnsiList(in []string) []string {
 	out := make([]string, len(in))
 	for i, s := range in {
-		out[i] = stripANSI(s)
+		out[i] = ansi.Strip(s)
 	}
 	return out
 }

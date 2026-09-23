@@ -2,14 +2,20 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/term"
 )
+
+func isTimeoutErr(err error) bool {
+	return errors.Is(err, os.ErrDeadlineExceeded)
+}
 
 type pickItem struct {
 	id    string
@@ -20,6 +26,7 @@ type pickItem struct {
 
 type picker struct {
 	in       *bufio.Reader
+	rawIn    io.Reader
 	out      io.Writer
 	fd       int
 	items    []pickItem
@@ -50,7 +57,7 @@ func newPickerFull(in io.Reader, out io.Writer, items []pickItem, initial int,
 	if initial < 0 || initial >= len(items) {
 		initial = 0
 	}
-	return &picker{in: br, out: out, fd: fd, items: items, initial: initial,
+	return &picker{in: br, rawIn: in, out: out, fd: fd, items: items, initial: initial,
 		title: title, subtitle: subtitle, efforts: efforts, effort0: effortIdx}
 }
 
@@ -136,13 +143,15 @@ func (p *picker) RunFull() (pickResult, bool) {
 	}
 	defer term.Restore(p.fd, old)
 
-	width, height, _ := term.GetSize(p.fd)
+	width, height := cachedTermSize()
 	if width <= 0 {
 		width = 80
 	}
 	if height <= 0 {
 		height = 24
 	}
+	resizeCh, stopResize := subscribeResize()
+	defer stopResize()
 	cursor := p.cursorRow()
 	if cursor <= 0 || cursor > height {
 		cursor = height
@@ -273,10 +282,32 @@ func (p *picker) RunFull() (pickResult, bool) {
 		io.WriteString(p.out, fmt.Sprintf("\x1b[?25h\x1b[%d;1H\x1b[J", panelTop))
 	}
 
+	deadliner, _ := p.rawIn.(interface {
+		SetReadDeadline(time.Time) error
+	})
+	if deadliner != nil {
+		defer deadliner.SetReadDeadline(time.Time{})
+	}
+	const pollInterval = 120 * time.Millisecond
+
 	draw()
 	for {
+		if deadliner != nil {
+			_ = deadliner.SetReadDeadline(time.Now().Add(pollInterval))
+		}
 		r, _, err := p.in.ReadRune()
 		if err != nil {
+			if deadliner != nil && isTimeoutErr(err) {
+				select {
+				case <-resizeCh:
+					if w, h := cachedTermSize(); w > 0 && h > 0 {
+						width, height = w, h
+					}
+					draw()
+				default:
+				}
+				continue
+			}
 			erase()
 			return pickResult{}, false
 		}
@@ -375,21 +406,4 @@ func scrollWindow(total, shown, sel, top int) int {
 		top = 0
 	}
 	return top
-}
-
-func filterPickItems(items []pickItem, q string) []pickItem {
-	q = strings.ToLower(strings.TrimSpace(q))
-	if q == "" {
-		return items
-	}
-	var out []pickItem
-	for _, it := range items {
-		if strings.Contains(strings.ToLower(it.label), q) ||
-			strings.Contains(strings.ToLower(it.id), q) ||
-			strings.Contains(strings.ToLower(it.tag), q) ||
-			strings.Contains(strings.ToLower(it.desc), q) {
-			out = append(out, it)
-		}
-	}
-	return out
 }
