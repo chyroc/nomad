@@ -313,6 +313,9 @@ func (p *picker) RunFull() (pickResult, bool) {
 		}
 		vis := filtered(string(query))
 		switch {
+		case r == 3:
+			erase()
+			return pickResult{}, false
 		case r == '\r' || r == '\n':
 			if p.multi {
 				var ids []string

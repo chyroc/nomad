@@ -179,8 +179,9 @@ func (t *textRenderer) OnEvent(ev loop.Event) {
 
 func oneLine(s string, max int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	if len(s) > max {
-		return s[:max] + "…"
+	r := []rune(s)
+	if len(r) > max {
+		return string(r[:max]) + "…"
 	}
 	return s
 }

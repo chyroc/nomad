@@ -205,17 +205,28 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 				pasted = pasted[:len(pasted)-1]
 			}
 
-		case r == 21:
-			buf, pasted, cursor = nil, nil, 0
-
-		case r == 11:
-			buf, pasted = buf[:cursor], nil
-
 		case r == 1:
 			cursor = 0
 
 		case r == 5:
 			cursor = len(buf)
+
+		case r == 23:
+			i := cursor
+			for i > 0 && (buf[i-1] == ' ' || buf[i-1] == '\t') {
+				i--
+			}
+			for i > 0 && buf[i-1] != ' ' && buf[i-1] != '\t' {
+				i--
+			}
+			buf = append(buf[:i], buf[cursor:]...)
+			cursor = i
+
+		case r == 11:
+			buf = buf[:cursor]
+
+		case r == 21:
+			buf, pasted, cursor = nil, nil, 0
 
 		case r == 15:
 			if e.onMouse != nil {
@@ -223,8 +234,19 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 			}
 
 		case r == 27:
+			if e.in.Buffered() == 0 {
+				continue
+			}
 			r2, _, err2 := e.in.ReadRune()
 			if err2 != nil {
+				continue
+			}
+			if r2 == 'b' {
+				cursor = wordLeft(buf, cursor)
+				continue
+			}
+			if r2 == 'f' {
+				cursor = wordRight(buf, cursor)
 				continue
 			}
 			if r2 == '[' {
@@ -319,6 +341,43 @@ func normalizePasted(s string) string {
 
 func visiblePromptWidth(s string) int {
 	return ansi.StringWidthWc(s)
+}
+
+func isWordChar(r rune) bool {
+	return r == '_' ||
+		(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+		(r >= '0' && r <= '9') ||
+		(r >= 0x4E00 && r <= 0x9FFF)
+}
+
+func isCJK(r rune) bool { return r >= 0x4E00 && r <= 0x9FFF }
+
+func wordLeft(buf []rune, cursor int) int {
+	i := cursor
+	for i > 0 && !isWordChar(buf[i-1]) {
+		i--
+	}
+	if i > 0 && isCJK(buf[i-1]) {
+		return i - 1
+	}
+	for i > 0 && isWordChar(buf[i-1]) && !isCJK(buf[i-1]) {
+		i--
+	}
+	return i
+}
+
+func wordRight(buf []rune, cursor int) int {
+	i := cursor
+	for i < len(buf) && !isWordChar(buf[i]) {
+		i++
+	}
+	if i < len(buf) && isCJK(buf[i]) {
+		return i + 1
+	}
+	for i < len(buf) && isWordChar(buf[i]) && !isCJK(buf[i]) {
+		i++
+	}
+	return i
 }
 
 func indexAtWidth(s string, target int) (int, int) {

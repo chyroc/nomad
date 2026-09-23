@@ -36,6 +36,7 @@ func (s *spinner) Start(color bool) {
 	s.active = true
 	s.stop = make(chan struct{})
 	s.done = make(chan struct{})
+	s.rendered = false
 
 	if !color {
 		close(s.done)

@@ -83,9 +83,17 @@ func startSizeWatcher(fd int) {
 
 // profileWriter downsamples SGR output to the terminal's color
 // capability (NO_COLOR, TERM=dumb, non-TTY) while keeping Fd available
-// for raw-mode and size calls.
+// for raw-mode and size calls. Writes are serialized so the spinner
+// goroutine and event rendering never interleave a single write.
 type profileWriter struct {
+	mu *sync.Mutex
 	*colorprofile.Writer
+}
+
+func (p *profileWriter) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Writer.Write(b)
 }
 
 func (p *profileWriter) Fd() uintptr {
@@ -96,7 +104,7 @@ func (p *profileWriter) Fd() uintptr {
 }
 
 func newProfileWriter(out io.Writer) io.Writer {
-	return &profileWriter{Writer: colorprofile.NewWriter(out, os.Environ())}
+	return &profileWriter{mu: &sync.Mutex{}, Writer: colorprofile.NewWriter(out, os.Environ())}
 }
 
 func fdOf(w io.Writer) int {

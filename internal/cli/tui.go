@@ -29,9 +29,9 @@ func (a *App) runTUI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if f, ok := a.out.(*os.File); ok {
+	if fdOf(a.out) >= 0 {
 		io.WriteString(a.out, "\x1b[?2004h")
-		defer io.WriteString(f, "\x1b[?2004l")
+		defer io.WriteString(a.out, "\x1b[?2004l")
 	}
 	a.editor = newLineEditor(a.in, a.out, nil)
 	a.editor.setCompleter(a.completeSlash)
@@ -206,7 +206,8 @@ func (a *App) onInteractiveEvent(ev loop.Event) {
 		a.stopSpinner()
 		if text := strings.TrimSpace(ev.Content); text != "" {
 			if a.color {
-				a.printf("%s\n", renderMarkdown(text))
+				width, _ := cachedTermSize()
+				a.printf("%s\n", renderMarkdown(text, width, true))
 			} else {
 				a.printf("%s\n\n", text)
 			}

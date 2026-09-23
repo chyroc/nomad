@@ -59,3 +59,22 @@ func TestSlashComplete(t *testing.T) {
 		}
 	}
 }
+
+func TestWordMotion(t *testing.T) {
+	buf := []rune("hello world 测试")
+	if got := wordLeft(buf, 5); got != 0 {
+		t.Errorf("wordLeft(5)=%d want 0", got)
+	}
+	if got := wordLeft(buf, 11); got != 6 {
+		t.Errorf("wordLeft(11)=%d want 6", got)
+	}
+	if got := wordRight(buf, 11); got != 13 {
+		t.Errorf("wordRight(11)=%d want 13 (space before first CJK char)", got)
+	}
+	if got := wordRight(buf, 12); got != 13 {
+		t.Errorf("wordRight(12)=%d want 13 (one CJK char)", got)
+	}
+	if got := wordRight(buf, 0); got != 5 {
+		t.Errorf("wordRight(0)=%d want 5", got)
+	}
+}
