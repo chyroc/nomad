@@ -30,6 +30,7 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 		a.foldMu.Lock()
 		a.folds = nil
 		a.foldOrder = nil
+		a.foldSeen = nil
 		a.nextFoldID = 0
 		a.foldMu.Unlock()
 		a.thinkingBuf.Reset()

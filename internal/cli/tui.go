@@ -311,6 +311,7 @@ func (a *App) registerFold(header string, lines []string) int {
 	defer a.foldMu.Unlock()
 	if a.folds == nil {
 		a.folds = map[int]*foldBlock{}
+		a.foldSeen = map[int]bool{}
 	}
 	a.nextFoldID++
 	id := a.nextFoldID
@@ -322,6 +323,7 @@ func (a *App) registerFold(header string, lines []string) int {
 func (a *App) expandFold(id int) {
 	a.foldMu.Lock()
 	b := a.folds[id]
+	a.foldSeen[id] = true
 	a.foldMu.Unlock()
 	if b == nil {
 		return
@@ -333,15 +335,21 @@ func (a *App) expandFold(id int) {
 	a.printf("%s  └──────────────%s\n", cCyan, cReset)
 }
 
+// expandLatestFold expands the earliest not-yet-expanded fold, so
+// repeated Ctrl+O walks folds top to bottom in scrollback order.
 func (a *App) expandLatestFold() {
 	a.foldMu.Lock()
-	if len(a.foldOrder) == 0 {
-		a.foldMu.Unlock()
-		return
+	var id int
+	for _, fid := range a.foldOrder {
+		if !a.foldSeen[fid] {
+			id = fid
+			break
+		}
 	}
-	id := a.foldOrder[len(a.foldOrder)-1]
 	a.foldMu.Unlock()
-	a.expandFold(id)
+	if id != 0 {
+		a.expandFold(id)
+	}
 }
 
 func (a *App) replay(evs []loop.Event) {
