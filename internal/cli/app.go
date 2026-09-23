@@ -55,6 +55,9 @@ type App struct {
 	lastAnswer string
 	skills     []contextinfo.DiscoveredSkill
 
+	thinkingBuf   strings.Builder
+	thinkingStart time.Time
+
 	foldMu     sync.Mutex
 	folds      map[int]*foldBlock
 	foldOrder  []int

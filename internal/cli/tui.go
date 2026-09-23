@@ -164,6 +164,8 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 
 	a.startSpinner()
 	a.lastAnswer = ""
+	a.thinkingBuf.Reset()
+	a.thinkingStart = time.Time{}
 	turnCtx, cancel := context.WithCancel(ctx)
 	a.turnMu.Lock()
 	a.turnCancel = cancel
@@ -197,13 +199,18 @@ func (a *App) onInteractiveEvent(ev loop.Event) {
 	}
 	switch ev.Kind {
 	case loop.EvAssistantThinking:
-		a.stopSpinner()
-		a.printf("%s%s%s\n", cDim, strings.TrimSpace(ev.Content), cReset)
+		if a.thinkingStart.IsZero() {
+			a.thinkingStart = time.Now()
+		}
+		a.thinkingBuf.WriteString(strings.TrimSpace(ev.Content))
+		a.thinkingBuf.WriteByte('\n')
 	case loop.EvAssistantChunk:
 		a.stopSpinner()
+		a.flushThinking()
 		a.lastAnswer += ev.Content
 	case loop.EvAssistantMessage:
 		a.stopSpinner()
+		a.flushThinking()
 		if text := strings.TrimSpace(ev.Content); text != "" {
 			if a.color {
 				width, _ := cachedTermSize()
@@ -214,6 +221,7 @@ func (a *App) onInteractiveEvent(ev loop.Event) {
 		}
 	case loop.EvToolCall:
 		a.stopSpinner()
+		a.flushThinking()
 		if ev.ToolCall != nil {
 			args := oneLine(ev.ToolCall.Arguments, 100)
 			if args == "{}" || args == "" {
@@ -223,15 +231,42 @@ func (a *App) onInteractiveEvent(ev loop.Event) {
 			}
 		}
 	case loop.EvToolResult:
+		a.flushThinking()
 		a.renderToolResult(ev)
 	case loop.EvTurnEnd:
+		a.flushThinking()
 		if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
 			a.printf("%s tokens %d↑ %d↓%s\n", cDim, ev.Usage.InputTokens, ev.Usage.OutputTokens, cReset)
 		}
 	case loop.EvError:
 		a.stopSpinner()
+		a.flushThinking()
 		a.printf("%s%v%s\n", cRed, ev.Content, cReset)
 	}
+}
+
+// flushThinking renders accumulated reasoning as a single collapsed
+// line registered as a fold (Ctrl+O or click expands it).
+func (a *App) flushThinking() {
+	body := strings.TrimSpace(a.thinkingBuf.String())
+	a.thinkingBuf.Reset()
+	if body == "" {
+		return
+	}
+	lines := strings.Split(body, "\n")
+	id := a.registerFold("thinking", lines)
+	dur := ""
+	if !a.thinkingStart.IsZero() {
+		dur = " · " + time.Since(a.thinkingStart).Round(time.Second).String()
+	}
+	a.thinkingStart = time.Time{}
+	preview := strings.TrimSpace(lines[0])
+	if len([]rune(preview)) > 60 {
+		preview = string([]rune(preview)[:60]) + "…"
+	}
+	bar := fmt.Sprintf("  %s✦ thought %d lines%s  — %s  (Ctrl+O)%s",
+		cDim, len(lines), dur, preview, cReset)
+	a.emitClickableLine2(id, bar)
 }
 
 func (a *App) renderToolResult(ev loop.Event) {
@@ -274,6 +309,13 @@ func (a *App) emitClickableLine(text string) int {
 	row := a.screenRow
 	a.advanceRows(1)
 	return row
+}
+
+func (a *App) emitClickableLine2(id int, text string) {
+	a.printf("%s\n", text)
+	row := a.screenRow
+	a.advanceRows(1)
+	a.recordFoldRow(id, row)
 }
 
 func (a *App) advanceRows(n int) {
