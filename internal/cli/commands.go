@@ -133,11 +133,7 @@ func (a *App) cmdModel(ctx context.Context, arg string) {
 	byID := map[string]ark.ModelInfo{}
 	selIdx := 0
 	for i, m := range models {
-		tag := m.ID
-		if m.Primary {
-			tag = m.ID + " · default"
-		}
-		items = append(items, pickItem{id: m.SelectID(), label: m.Name, tag: tag})
+		items = append(items, pickItem{id: m.SelectID(), label: m.Name})
 		byID[m.SelectID()] = m
 		if m.SelectID() == a.model {
 			selIdx = i

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 
 	arkruntime "github.com/volcengine/ark-runtime-go/arkruntime"
@@ -160,6 +161,7 @@ func (c *Client) listInferenceModels(ctx context.Context) ([]ModelInfo, error) {
 		}
 		models = append(models, info)
 	}
+	sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
 	return models, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 )
 
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
@@ -30,7 +31,7 @@ func (c *Client) readModelCache() ([]ModelInfo, bool) {
 	if err := json.Unmarshal(data, &models); err != nil || len(models) == 0 {
 		return nil, false
 	}
-	return models, true
+	return collapseModelVersions(models), true
 }
 
 func (c *Client) writeModelCache(models []ModelInfo) {
@@ -130,7 +131,37 @@ func (c *Client) listAgentModelsSigned(ctx context.Context) ([]ModelInfo, error)
 			Efforts:      efforts,
 		})
 	}
-	return out, nil
+	return collapseModelVersions(out), nil
+}
+
+// collapseModelVersions keeps one entry per model name: the primary
+// version when one exists, otherwise the newest version. The result is
+// sorted by model name.
+func collapseModelVersions(models []ModelInfo) []ModelInfo {
+	byName := map[string]ModelInfo{}
+	for _, m := range models {
+		if existing, ok := byName[m.Name]; !ok || preferModelVersion(m, existing) {
+			byName[m.Name] = m
+		}
+	}
+	out := make([]ModelInfo, 0, len(byName))
+	for _, m := range byName {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Version > out[j].Version
+	})
+	return out
+}
+
+func preferModelVersion(candidate, existing ModelInfo) bool {
+	if candidate.Primary != existing.Primary {
+		return candidate.Primary
+	}
+	return candidate.Version > existing.Version
 }
 
 func preferredModel(models []ModelInfo) string {
