@@ -268,7 +268,7 @@ func (a *App) flushThinking() {
 		return
 	}
 	lines := strings.Split(body, "\n")
-	id := a.registerFold("thinking", lines)
+	id := a.registerFold("reasoning", lines)
 	dur := ""
 	if !a.thinkingStart.IsZero() {
 		dur = " · " + time.Since(a.thinkingStart).Round(time.Second).String()

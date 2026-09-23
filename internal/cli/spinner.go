@@ -57,11 +57,13 @@ func (s *spinner) Start(color bool) {
 				i++
 				s.mu.Lock()
 				active := s.active
+				if active {
+					io.WriteString(s.out, "\r\x1b[2K"+frame+" "+s.label)
+				}
 				s.mu.Unlock()
 				if !active {
 					return
 				}
-				io.WriteString(s.out, "\r\x1b[2K"+frame+" "+s.label)
 			}
 		}
 	}()
@@ -77,11 +79,11 @@ func (s *spinner) Stop() {
 	s.active = false
 	stop, done := s.stop, s.done
 	rendered := s.rendered
-	s.mu.Unlock()
-
 	if rendered {
 		io.WriteString(s.out, "\r\x1b[2K")
 	}
+	s.mu.Unlock()
+
 	close(stop)
 	<-done
 }
