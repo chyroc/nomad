@@ -1,0 +1,55 @@
+# GoReleaser configuration for nomad.
+# Builds multi-platform binaries, packs archives, and publishes a GitHub
+# Release on `git tag vX.Y.Z`. The npm wrapper downloads these archives.
+version: 2
+
+project_name: nomad
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: nomad
+    main: ./cmd/nomad
+    binary: nomad
+    env:
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/chyroc/nomad/internal/cli.Version={{.Version}}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+      - freebsd_amd64
+
+archives:
+  - id: default
+    name_template: "nomad_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    wrap_in_directory: false
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "nomad_{{ .Version }}_checksums.txt"
+
+source:
+  enabled: true
+  name_template: "nomad_{{ .Version }}_source"
+  format: tar.gz
+
+release:
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+
+changelog:
+  disable: true

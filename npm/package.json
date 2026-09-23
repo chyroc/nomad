@@ -1,0 +1,49 @@
+{
+  "name": "@chyroc/nomad",
+  "version": "0.1.0",
+  "description": "Self-hosted coding agent CLI for the Volcengine Ark managed-agents runtime",
+  "keywords": [
+    "cli",
+    "agent",
+    "coding-agent",
+    "ark",
+    "volcengine",
+    "managed-agents"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/chyroc/nomad#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chyroc/nomad.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chyroc/nomad/issues"
+  },
+  "bin": {
+    "nomad": "bin/nomad.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "install.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "freebsd"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

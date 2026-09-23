@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  npm-installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Syntax check npm wrapper scripts
+        working-directory: npm
+        run: |
+          node --check install.js
+          node --check bin/nomad.js
+          node --check lib/paths.js
+          node --check lib/extract.js
+      - name: Validate package.json
+        working-directory: npm
+        run: node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"

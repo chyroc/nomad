@@ -1,0 +1,16 @@
+# local Nomad data / config overrides (contains API keys, never commit)
+.nomad/
+.nomad.*.json
+
+# Go
+/bin/
+*.exe
+*.test
+*.out
+coverage.txt
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store
+CLAUDE.local.md
