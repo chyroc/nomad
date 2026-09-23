@@ -115,15 +115,22 @@ func (p *picker) RunFull() (pickResult, bool) {
 	if height <= 0 {
 		height = 24
 	}
-	anchor := p.cursorRow()
-	if anchor <= 0 {
-		anchor = 1
+	cursor := p.cursorRow()
+	if cursor <= 0 || cursor > height {
+		cursor = height
+	}
+
+	const headerRows = 4 // divider, title, subtitle, blank
+	footRows := 1
+	if len(p.efforts) > 0 {
+		footRows++
 	}
 
 	var query []rune
 	sel := p.initial
 	effort := p.effort0
 	top := 0
+	panelTop := cursor
 
 	filtered := func(q string) []pickItem {
 		return filterPickItems(p.items, q)
@@ -135,7 +142,7 @@ func (p *picker) RunFull() (pickResult, bool) {
 			sel = 0
 			top = 0
 		}
-		maxItems := height - anchor - 5
+		maxItems := height - headerRows - footRows
 		if maxItems < 1 {
 			maxItems = 1
 		}
@@ -144,9 +151,23 @@ func (p *picker) RunFull() (pickResult, bool) {
 		if shown > maxItems {
 			shown = maxItems
 		}
+		listRows := shown
+		if listRows == 0 {
+			listRows = 1
+		}
+		needed := headerRows + listRows + footRows
+		anchor := cursor
+		if anchor+needed-1 > height {
+			anchor = height - needed + 1
+		}
+		if anchor < 1 {
+			anchor = 1
+		}
+		panelTop = anchor
 		top = scrollWindow(total, shown, sel, top)
 
 		var sb strings.Builder
+		sb.WriteString("\x1b[?25l")
 		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[J", anchor))
 		row := anchor
 		if p.title != "" {
@@ -158,6 +179,10 @@ func (p *picker) RunFull() (pickResult, bool) {
 				sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m  %s\x1b[0m", row, truncateToWidth(p.subtitle, width-4)))
 				row++
 			}
+			row++
+		}
+		if shown == 0 {
+			sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m    (no matches)%s\x1b[0m", row, strings.Repeat(" ", width)))
 			row++
 		}
 		for i := 0; i < shown; i++ {
@@ -187,12 +212,15 @@ func (p *picker) RunFull() (pickResult, bool) {
 		if p.title == "Select model" {
 			foot = "  Enter to set as default · s to use this session only · Esc to cancel"
 		}
+		if p.title == "Select project" {
+			foot = "  Enter to select project · Esc to cancel"
+		}
 		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m%s\x1b[0m", row, foot))
 		io.WriteString(p.out, sb.String())
 	}
 
 	erase := func() {
-		io.WriteString(p.out, fmt.Sprintf("\x1b[%d;1H\x1b[J", anchor))
+		io.WriteString(p.out, fmt.Sprintf("\x1b[?25h\x1b[%d;1H\x1b[J", panelTop))
 	}
 
 	draw()

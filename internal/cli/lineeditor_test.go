@@ -30,3 +30,32 @@ func TestIndexAtWidth(t *testing.T) {
 		t.Fatalf("idx=%d w=%d", idx, w)
 	}
 }
+
+func TestSlashComplete(t *testing.T) {
+	complete := func(line string) []string {
+		cmds := []string{"/help", "/clear", "/model", "/memory", "/resume"}
+		var out []string
+		for _, c := range cmds {
+			if len(line) > 0 && c[:len(line)] == line {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	cases := []struct {
+		line string
+		want string
+	}{
+		{"/mod", "/model"},
+		{"/mo", "/model"},
+		{"/m", ""},
+		{"/re", "/resume"},
+		{"/x", ""},
+		{"/model x", ""},
+	}
+	for _, c := range cases {
+		if got := slashComplete(complete, c.line); got != c.want {
+			t.Errorf("slashComplete(%q)=%q want %q", c.line, got, c.want)
+		}
+	}
+}

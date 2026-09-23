@@ -4,6 +4,7 @@ go 1.24
 
 require (
 	github.com/charmbracelet/glamour v0.10.0
+	github.com/creack/pty v1.1.21
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/volcengine/ark-runtime-go v0.9.0
 	github.com/volcengine/volcengine-go-sdk v1.2.51

@@ -11,6 +11,28 @@ import (
 	"github.com/chyroc/nomad/internal/control"
 )
 
+// chooseProject shows an up/down selector for the account's IAM
+// projects. Esc or any read failure falls back to the first project.
+func chooseProject(br *bufio.Reader, out io.Writer, projects []string) string {
+	if len(projects) == 0 {
+		return ""
+	}
+	items := make([]pickItem, 0, len(projects))
+	for _, p := range projects {
+		items = append(items, pickItem{id: p, label: p})
+	}
+	fmt.Fprintln(out)
+	pk := newPickerFull(br, out, items, 0,
+		"Select project",
+		"The new API key will be scoped to this project.",
+		nil, 0)
+	id, ok := pk.Run()
+	if !ok || id == "" {
+		return projects[0]
+	}
+	return id
+}
+
 func (a *App) interactiveLogin(ctx context.Context, app *control.App) error {
 	return a.loginFlow(ctx, app, a.in, a.out)
 }
@@ -34,6 +56,9 @@ func (a *App) loginFlow(ctx context.Context, app *control.App, in io.Reader, out
 			fmt.Fprint(out, "Paste authorization code: ")
 			line, err := br.ReadString('\n')
 			return strings.TrimSpace(line), err
+		},
+		func(projects []string) string {
+			return chooseProject(br, out, projects)
 		},
 	)
 	if err != nil {

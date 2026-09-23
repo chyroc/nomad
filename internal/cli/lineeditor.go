@@ -292,6 +292,14 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 			b.WriteString(drainPaste())
 			pasted = append(pasted, normalizePasted(b.String()))
 
+		case r == 9:
+			if len(pasted) == 0 {
+				if c := slashComplete(e.completer, string(buf)); c != "" {
+					buf = []rune(c)
+					cursor = len(buf)
+				}
+			}
+
 		case r >= 32:
 			buf = append(buf[:cursor], append([]rune{r}, buf[cursor:]...)...)
 			cursor++
@@ -439,6 +447,42 @@ func slashUnique(complete func(string) []string, line string) string {
 	matches := complete(line)
 	if len(matches) == 1 && matches[0] != line {
 		return matches[0]
+	}
+	return ""
+}
+
+func slashComplete(complete func(string) []string, line string) string {
+	if complete == nil {
+		return ""
+	}
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "/") || strings.ContainsAny(trimmed, " \t") {
+		return ""
+	}
+	var matches []string
+	seen := map[string]bool{}
+	for _, m := range complete(trimmed) {
+		m = strings.TrimSpace(m)
+		if !strings.HasPrefix(m, trimmed) || m == trimmed || seen[m] {
+			continue
+		}
+		seen[m] = true
+		matches = append(matches, m)
+	}
+	switch len(matches) {
+	case 0:
+		return ""
+	case 1:
+		return matches[0]
+	}
+	prefix := matches[0]
+	for _, m := range matches[1:] {
+		for !strings.HasPrefix(m, prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	if len(prefix) > len(trimmed) {
+		return prefix
 	}
 	return ""
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/chyroc/nomad/internal/ark"
@@ -47,8 +48,9 @@ var ErrNotLoggedIn = errors.New("not logged in")
 
 // Login runs the interactive cross-device OAuth flow and mints an Ark
 // API key. onURL is called with the authorization link; promptCode reads
-// the pasted callback code from the user.
-func (a *App) Login(ctx context.Context, onURL func(string), promptCode func() (string, error)) error {
+// the pasted callback code from the user; chooseProject selects one of
+// the account's IAM projects when several exist.
+func (a *App) Login(ctx context.Context, onURL func(string), promptCode func() (string, error), chooseProject func([]string) string) error {
 	begin, err := ark.BeginLogin()
 	if err != nil {
 		return err
@@ -67,12 +69,29 @@ func (a *App) Login(ctx context.Context, onURL func(string), promptCode func() (
 	if err != nil {
 		return err
 	}
-	info, err := ark.CreateArkAPIKey(ctx, ak, sk, token, "nomad-cli-"+timestampName())
+	projects, err := ark.ListProjectNames(ctx, ak, sk, token)
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
+	}
+	project := ""
+	switch len(projects) {
+	case 0:
+	case 1:
+		project = projects[0]
+	default:
+		if chooseProject != nil {
+			project = chooseProject(projects)
+		}
+		if project == "" {
+			project = projects[0]
+		}
+	}
+	info, err := ark.CreateArkAPIKey(ctx, ak, sk, token, "nomad-cli-"+timestampName(), project)
 	if err != nil {
 		return err
 	}
 	creds.APIKey = info.APIKey
-	creds.ProjectName = info.ProjectName
+	creds.ProjectName = project
 	if err := ark.Save(a.Paths.AuthFile(), creds); err != nil {
 		return err
 	}
