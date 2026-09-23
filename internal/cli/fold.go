@@ -25,6 +25,6 @@ func foldLines(header, body string) (head []string, tail []string, more int, ok 
 	return all[:foldHead], all[len(all)-foldTail:], len(all) - foldHead - foldTail, true
 }
 
-func foldBar(id, more int) string {
+func foldBar(more int) string {
 	return fmt.Sprintf("\x1b[2m\x1b[4m  … %d more lines — press Ctrl+O to expand  \x1b[0m", more)
 }

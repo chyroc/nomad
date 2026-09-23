@@ -65,9 +65,7 @@ type App struct {
 	foldMu     sync.Mutex
 	folds      map[int]*foldBlock
 	foldOrder  []int
-	foldRows   map[int]int
 	nextFoldID int
-	screenRow  int
 	mouseOn    bool
 }
 

@@ -36,16 +36,10 @@ func (a *App) runTUI(ctx context.Context) error {
 	a.editor = newLineEditor(a.in, a.out, nil)
 	a.editor.setCompleter(a.completeSlash)
 	a.editor.onMouse = func(button, x, y int) bool {
-		if button < 0 {
-			a.expandLatestFold()
-			return true
-		}
-		if id, ok := a.foldAtScreenY(y); ok {
-			a.expandFold(id)
-			return true
-		}
+		_ = x
+		_ = y
 		a.expandLatestFold()
-		return false
+		return true
 	}
 
 	a.printf("%s◆ Nomad%s · %s · model %s · %s\n",
@@ -268,7 +262,7 @@ func (a *App) flushThinking() {
 		return
 	}
 	lines := strings.Split(body, "\n")
-	id := a.registerFold("reasoning", lines)
+	a.registerFold("reasoning", lines)
 	dur := ""
 	if !a.thinkingStart.IsZero() {
 		dur = " · " + time.Since(a.thinkingStart).Round(time.Second).String()
@@ -280,7 +274,7 @@ func (a *App) flushThinking() {
 	}
 	bar := fmt.Sprintf("  %s✦ thought %d lines%s  — %s  (Ctrl+O)%s",
 		cDim, len(lines), dur, preview, cReset)
-	a.emitClickableLine2(id, bar)
+	a.printf("%s\n", bar)
 }
 
 func (a *App) renderToolResult(ev loop.Event) {
@@ -295,47 +289,21 @@ func (a *App) renderToolResult(ev loop.Event) {
 	header := ev.ToolName
 
 	head, tail, more, folded := foldLines(header, body)
-	a.emitLine("  └─ "+header+":", cDim)
+	a.printf("%s  └─ %s:%s\n", cDim, header, cReset)
 	if !folded {
 		for _, l := range head {
-			a.emitLine("    "+l, color)
+			a.printf("%s    %s%s\n", color, l, cReset)
 		}
 		return
 	}
 	for _, l := range head {
-		a.emitLine("    "+l, color)
+		a.printf("%s    %s%s\n", color, l, cReset)
 	}
-	id := a.registerFold(header, strings.Split(body, "\n"))
-	row := a.emitClickableLine("    " + foldBar(id, more))
-	a.recordFoldRow(id, row)
+	a.registerFold(header, strings.Split(body, "\n"))
+	a.printf("%s\n", foldBar(more))
 	for _, l := range tail {
-		a.emitLine("    "+l, color)
+		a.printf("%s    %s%s\n", color, l, cReset)
 	}
-}
-
-func (a *App) emitLine(text, color string) {
-	a.printf("%s%s%s\n", color, text, cReset)
-	a.advanceRows(1)
-}
-
-func (a *App) emitClickableLine(text string) int {
-	a.printf("%s\n", text)
-	row := a.screenRow
-	a.advanceRows(1)
-	return row
-}
-
-func (a *App) emitClickableLine2(id int, text string) {
-	a.printf("%s\n", text)
-	row := a.screenRow
-	a.advanceRows(1)
-	a.recordFoldRow(id, row)
-}
-
-func (a *App) advanceRows(n int) {
-	a.foldMu.Lock()
-	a.screenRow += n
-	a.foldMu.Unlock()
 }
 
 func (a *App) registerFold(header string, lines []string) int {
@@ -343,19 +311,12 @@ func (a *App) registerFold(header string, lines []string) int {
 	defer a.foldMu.Unlock()
 	if a.folds == nil {
 		a.folds = map[int]*foldBlock{}
-		a.foldRows = map[int]int{}
 	}
 	a.nextFoldID++
 	id := a.nextFoldID
 	a.folds[id] = &foldBlock{id: id, header: header, lines: lines}
 	a.foldOrder = append(a.foldOrder, id)
 	return id
-}
-
-func (a *App) recordFoldRow(id, row int) {
-	a.foldMu.Lock()
-	a.foldRows[row] = id
-	a.foldMu.Unlock()
 }
 
 func (a *App) expandFold(id int) {
@@ -366,13 +327,10 @@ func (a *App) expandFold(id int) {
 		return
 	}
 	a.printf("%s  ┌─ expanded %s (%d lines)%s\n", cCyan, b.header, len(b.lines), cReset)
-	a.advanceRows(1)
 	for _, l := range b.lines {
 		a.printf("%s  │ %s%s\n", cDim, l, cReset)
-		a.advanceRows(1)
 	}
 	a.printf("%s  └──────────────%s\n", cCyan, cReset)
-	a.advanceRows(1)
 }
 
 func (a *App) expandLatestFold() {
@@ -384,17 +342,6 @@ func (a *App) expandLatestFold() {
 	id := a.foldOrder[len(a.foldOrder)-1]
 	a.foldMu.Unlock()
 	a.expandFold(id)
-}
-
-func (a *App) foldAtScreenY(y int) (int, bool) {
-	a.foldMu.Lock()
-	defer a.foldMu.Unlock()
-	for row, id := range a.foldRows {
-		if row == y || row == y-1 {
-			return id, true
-		}
-	}
-	return 0, false
 }
 
 func (a *App) replay(evs []loop.Event) {
