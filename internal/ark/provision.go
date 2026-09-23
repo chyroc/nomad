@@ -13,6 +13,7 @@ type Profile struct {
 	EnvironmentID string         `json:"environment_id"`
 	AgentID       string         `json:"agent_id"`
 	Model         string         `json:"model"`
+	Effort        string         `json:"effort,omitempty"`
 	SkillBindings []SkillBinding `json:"skill_bindings,omitempty"`
 }
 

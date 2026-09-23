@@ -19,6 +19,7 @@ type Options struct {
 
 	Model           string
 	ReasoningEffort string
+	EffortSet       bool
 	PermissionMode  string
 	AllowedTools    []string
 	DisallowedTools []string
@@ -69,6 +70,7 @@ func ParseOptions(argv []string) (Options, error) {
 			o.Model = value
 		case "effort", "reasoning-effort":
 			o.ReasoningEffort = value
+			o.EffortSet = true
 		case "resume":
 			o.Resume = value
 		case "c", "continue":
@@ -236,7 +238,7 @@ CORE OPTIONS
       --version --help
 
 TUI COMMANDS
-  /help /clear /model /status /cost /resume /sessions /skills /memory
+  /help /clear /model /effort /status /cost /resume /sessions /skills /memory
   /permissions /config /init /login /logout /exit
 
 `

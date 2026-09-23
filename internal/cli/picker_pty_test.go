@@ -1,4 +1,3 @@
-
 package cli
 
 import (
@@ -260,5 +259,55 @@ func runPickerCase(t *testing.T, anchor int) {
 		t.Logf("esc result=%+v ok=%v", r, <-okch)
 	case <-time.After(2 * time.Second):
 		t.Fatal("picker did not close on Esc")
+	}
+}
+
+func TestPtyMultiSelect(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer slave.Close()
+	if err := pty.Setsize(slave, &pty.Winsize{Rows: 24, Cols: 120}); err != nil {
+		t.Fatal(err)
+	}
+	e := &emu{curRow: 5}
+	go e.pump(master)
+
+	items := []pickItem{
+		{id: "a", label: "alpha", desc: "first skill"},
+		{id: "b", label: "beta", desc: "second skill"},
+		{id: "c", label: "gamma", desc: "third skill"},
+	}
+	pk := newPickerFull(slave, slave, items, 0, "Sync skills", "desc.", nil, 0).
+		withMultiSelect(nil)
+	resCh := make(chan pickResult, 1)
+	okCh := make(chan bool, 1)
+	go func() {
+		r, ok := pk.RunFull()
+		resCh <- r
+		okCh <- ok
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	master.Write([]byte{' '}) // check alpha
+	time.Sleep(150 * time.Millisecond)
+	master.Write([]byte{0x1b, '[', 'B'}) // move to beta
+	time.Sleep(150 * time.Millisecond)
+	master.Write([]byte{' '}) // check beta
+	time.Sleep(150 * time.Millisecond)
+	master.Write([]byte{' '}) // uncheck beta
+	time.Sleep(150 * time.Millisecond)
+	fmt.Printf("=== MULTI DRAW ===\n%s\n", render(e.snapshot()))
+	master.Write([]byte{'\r'})
+	select {
+	case r := <-resCh:
+		confirmed := <-okCh
+		if !confirmed || len(r.ids) != 1 || r.ids[0] != "a" {
+			t.Fatalf("expected only [a], got %+v ok=%v", r, confirmed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("multi picker did not confirm")
 	}
 }

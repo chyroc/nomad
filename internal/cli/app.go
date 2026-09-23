@@ -117,6 +117,9 @@ func (a *App) Run(ctx context.Context) error {
 	if a.model == "" {
 		a.model = app.Profile.Model
 	}
+	if !a.opts.EffortSet && app.Profile.Effort != "" {
+		a.opts.ReasoningEffort = app.Profile.Effort
+	}
 
 	if err := app.EnsureProvision(ctx); err != nil {
 		return fmt.Errorf("provision managed-agents resources: %w\n(run `nomad login` to refresh credentials)", err)

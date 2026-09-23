@@ -28,6 +28,9 @@ type picker struct {
 	subtitle string
 	efforts  []string
 	effort0  int
+	session  bool
+	multi    bool
+	checked  map[string]bool
 }
 
 func newPicker(in io.Reader, out io.Writer, items []pickItem, initial int) *picker {
@@ -49,6 +52,24 @@ func newPickerFull(in io.Reader, out io.Writer, items []pickItem, initial int,
 	}
 	return &picker{in: br, out: out, fd: fd, items: items, initial: initial,
 		title: title, subtitle: subtitle, efforts: efforts, effort0: effortIdx}
+}
+
+// withSessionSave enables the "s to use this session only" action.
+func (p *picker) withSessionSave() *picker {
+	p.session = true
+	return p
+}
+
+// withMultiSelect turns the picker into a checkbox list: Space toggles
+// the highlighted row, a toggles all visible rows, Enter confirms the
+// checked set.
+func (p *picker) withMultiSelect(initial []string) *picker {
+	p.multi = true
+	p.checked = map[string]bool{}
+	for _, id := range initial {
+		p.checked[id] = true
+	}
+	return p
 }
 
 func (p *picker) cursorRow() int {
@@ -88,6 +109,7 @@ func (p *picker) cursorRow() int {
 
 type pickResult struct {
 	id        string
+	ids       []string
 	confirmed bool
 	session   bool
 	effortIdx int
@@ -96,6 +118,12 @@ type pickResult struct {
 func (p *picker) Run() (string, bool) {
 	r, ok := p.RunFull()
 	return r.id, ok && r.confirmed
+}
+
+// RunMulti returns the checked item ids after a multi-select run.
+func (p *picker) RunMulti() ([]string, bool) {
+	r, ok := p.RunFull()
+	return r.ids, ok && r.confirmed
 }
 
 func (p *picker) RunFull() (pickResult, bool) {
@@ -193,15 +221,31 @@ func (p *picker) RunFull() (pickResult, bool) {
 			it := vis[idx]
 			marker := "    "
 			label := it.label
-			if idx == sel {
+			if p.multi {
+				box := "○"
+				if p.checked[it.id] {
+					box = "◉"
+				}
+				if idx == sel {
+					marker = "  \x1b[36m❯\x1b[0m \x1b[36m" + box + "\x1b[0m "
+					label = "\x1b[36m" + it.label + "\x1b[0m"
+				} else if p.checked[it.id] {
+					marker = "    \x1b[32m" + box + "\x1b[0m "
+				} else {
+					marker = "    " + box + " "
+				}
+			} else if idx == sel {
 				marker = "  \x1b[36m❯\x1b[0m "
 				label = "\x1b[36m" + it.label + "\x1b[0m"
 			}
-			tag := ""
+			line := label
 			if it.tag != "" {
-				tag = "  " + it.tag
+				line += "  " + it.tag
 			}
-			sb.WriteString(fmt.Sprintf("\x1b[%d;1H%s%s%s", row, marker, label, tag))
+			if p.multi && it.desc != "" {
+				line += "  " + it.desc
+			}
+			sb.WriteString(fmt.Sprintf("\x1b[%d;1H%s%s", row, marker, truncateToWidth(line, width-6)))
 			row++
 		}
 		if len(p.efforts) > 0 && effort < len(p.efforts) {
@@ -209,11 +253,17 @@ func (p *picker) RunFull() (pickResult, bool) {
 			row++
 		}
 		foot := "  Enter to confirm · Esc to cancel"
-		if p.title == "Select model" {
+		switch {
+		case p.multi:
+			n := 0
+			for _, it := range vis {
+				if p.checked[it.id] {
+					n++
+				}
+			}
+			foot = fmt.Sprintf("  Space to toggle · * to toggle all · Enter to confirm %d selected · Esc to cancel", n)
+		case p.session:
 			foot = "  Enter to set as default · s to use this session only · Esc to cancel"
-		}
-		if p.title == "Select project" {
-			foot = "  Enter to select project · Esc to cancel"
 		}
 		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m%s\x1b[0m", row, foot))
 		io.WriteString(p.out, sb.String())
@@ -233,11 +283,37 @@ func (p *picker) RunFull() (pickResult, bool) {
 		vis := filtered(string(query))
 		switch {
 		case r == '\r' || r == '\n':
+			if p.multi {
+				var ids []string
+				for _, it := range p.items {
+					if p.checked[it.id] {
+						ids = append(ids, it.id)
+					}
+				}
+				erase()
+				return pickResult{ids: ids, confirmed: true}, true
+			}
 			if sel < len(vis) {
 				erase()
 				return pickResult{id: vis[sel].id, confirmed: true, effortIdx: effort}, true
 			}
-		case r == 's' && p.title == "Select model":
+		case r == ' ' && p.multi:
+			if sel < len(vis) {
+				id := vis[sel].id
+				p.checked[id] = !p.checked[id]
+			}
+		case r == '*' && p.multi:
+			allChecked := len(vis) > 0
+			for _, it := range vis {
+				if !p.checked[it.id] {
+					allChecked = false
+					break
+				}
+			}
+			for _, it := range vis {
+				p.checked[it.id] = !allChecked
+			}
+		case r == 's' && p.session && !p.multi:
 			if sel < len(vis) {
 				erase()
 				return pickResult{id: vis[sel].id, confirmed: true, session: true, effortIdx: effort}, true

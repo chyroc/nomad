@@ -74,6 +74,9 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 	case "/model":
 		a.cmdModel(ctx, arg)
 		return false, nil
+	case "/effort":
+		a.cmdEffort(ctx, arg)
+		return false, nil
 	case "/status":
 		a.cmdStatus()
 		return false, nil
@@ -130,21 +133,19 @@ func (a *App) cmdModel(ctx context.Context, arg string) {
 		return
 	}
 	items := make([]pickItem, 0, len(models))
-	byID := map[string]ark.ModelInfo{}
 	selIdx := 0
 	for i, m := range models {
 		items = append(items, pickItem{id: m.SelectID(), label: m.Name})
-		byID[m.SelectID()] = m
 		if m.SelectID() == a.model {
 			selIdx = i
 		}
 	}
-	efforts := []string{"low", "medium", "high", "xhigh", "max"}
+	efforts := effortLadder
 	effortIdx := effortIndex(efforts, a.opts.ReasoningEffort)
 	pk := newPickerFull(a.in, a.out, items, selIdx,
 		"Select model",
 		"Switch the model and thinking effort. Enter saves as default, s applies to this session.",
-		efforts, effortIdx)
+		efforts, effortIdx).withSessionSave()
 	res, ok := pk.RunFull()
 	if !ok || res.id == "" {
 		return
@@ -153,14 +154,18 @@ func (a *App) cmdModel(ctx context.Context, arg string) {
 	if res.effortIdx < len(efforts) {
 		a.opts.ReasoningEffort = efforts[res.effortIdx]
 	}
-	if chosen, has := byID[res.id]; has && len(chosen.Efforts) > 0 {
-		a.opts.ReasoningEffort = ark.ResolveEffort(a.opts.ReasoningEffort, chosen.Efforts)
-	}
 	if !res.session {
 		_ = a.ctrl.SetModel(res.id)
+		_ = a.ctrl.SetEffort(a.opts.ReasoningEffort)
 	}
 	a.closeRunner()
-	a.printf("%smodel: %s · effort: %s%s\n", cGreen, res.id, a.opts.ReasoningEffort, cReset)
+	note := ""
+	if supported := a.currentModelEfforts(ctx); len(supported) > 0 {
+		if effective := ark.ResolveEffort(a.opts.ReasoningEffort, supported); effective != a.opts.ReasoningEffort {
+			note = " · model will use " + effective
+		}
+	}
+	a.printf("%smodel: %s · effort: %s%s%s\n", cGreen, res.id, a.opts.ReasoningEffort, note, cReset)
 }
 
 func effortIndex(efforts []string, current string) int {
@@ -175,6 +180,68 @@ func effortIndex(efforts []string, current string) int {
 	return len(efforts) - 1
 }
 
+var effortLadder = []string{"low", "medium", "high", "xhigh", "max"}
+
+func (a *App) currentModelEfforts(ctx context.Context) []string {
+	models, err := a.ctrl.Client.ListModels(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, m := range models {
+		if m.SelectID() == a.model {
+			return m.Efforts
+		}
+	}
+	return nil
+}
+
+func (a *App) cmdEffort(ctx context.Context, arg string) {
+	arg = strings.TrimSpace(arg)
+	apply := func(level string, session bool) {
+		a.opts.ReasoningEffort = level
+		if !session {
+			_ = a.ctrl.SetEffort(level)
+		}
+		a.closeRunner()
+		scope := "default"
+		if session {
+			scope = "this session"
+		}
+		note := ""
+		if supported := a.currentModelEfforts(ctx); len(supported) > 0 {
+			if effective := ark.ResolveEffort(level, supported); effective != level {
+				note = " · current model will use " + effective
+			}
+		}
+		a.printf("%seffort: %s · %s%s%s\n", cGreen, level, scope, note, cReset)
+	}
+	if arg != "" {
+		apply(arg, false)
+		return
+	}
+	supported := map[string]bool{}
+	for _, e := range a.currentModelEfforts(ctx) {
+		supported[e] = true
+	}
+	items := make([]pickItem, 0, len(effortLadder))
+	for _, e := range effortLadder {
+		tag := ""
+		if len(supported) > 0 && !supported[e] {
+			tag = "unsupported by current model"
+		}
+		items = append(items, pickItem{id: e, label: e, tag: tag})
+	}
+	pk := newPickerFull(a.in, a.out, items, effortIndex(effortLadder, a.opts.ReasoningEffort),
+		"Select thinking effort",
+		"Depth of reasoning before answering. Enter saves as default, s applies to this session.",
+		nil, 0).withSessionSave()
+	res, ok := pk.RunFull()
+	if !ok || res.id == "" {
+		return
+	}
+	apply(res.id, res.session)
+}
+
 func (a *App) cmdStatus() {
 	branch := gitBranch(a.paths.Workspace)
 	account := "(unknown)"
@@ -186,6 +253,7 @@ func (a *App) cmdStatus() {
 		{"Backend", "managed-agents (Volcengine Ark)"},
 		{"Account", account},
 		{"Model", a.model},
+		{"Thinking effort", orDefault(a.opts.ReasoningEffort, "max")},
 		{"Agent", a.ctrl.Profile.AgentID},
 		{"Environment", a.ctrl.Profile.EnvironmentID},
 		{"Session", orDefault(a.sessionID, "(not started)")},
@@ -328,6 +396,7 @@ func (a *App) cmdConfig(arg string) {
 		a.printf("%spermission = %s%s\n", cGreen, val, cReset)
 	case "effort", "reasoning_effort":
 		a.opts.ReasoningEffort = val
+		_ = a.ctrl.SetEffort(val)
 		a.closeRunner()
 		a.printf("%seffort = %s%s\n", cGreen, val, cReset)
 	default:
@@ -341,6 +410,7 @@ func commandHelp() string {
 		"  /help                 show this help",
 		"  /clear                start a new session",
 		"  /model [id]           list or switch model",
+		"  /effort [level]       list or switch thinking effort",
 		"  /status               show account/model/session/workspace status",
 		"  /cost                 show token usage for the session",
 		"  /resume <session-id>  resume a remote session",

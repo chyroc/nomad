@@ -44,7 +44,6 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 			chosen = append(chosen, d)
 		}
 	} else {
-		a.printSkillCatalogue(discovered)
 		approved, err := a.multiSelectSkills(discovered)
 		if err != nil {
 			return err
@@ -95,48 +94,37 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 	return nil
 }
 
-func (a *App) printSkillCatalogue(discovered []contextinfo.DiscoveredSkill) {
-	a.printf("%sDiscovered local skills:%s\n", cBold, cReset)
-	for i, d := range discovered {
-		a.printf(" %d) %s %s\n    %s%s\n", i+1, a.style(cCyan, d.Name),
-			a.style(cDim, d.Dir), a.style(cDim, truncate(d.Description, 90)), cReset)
-	}
-}
-
-// multiSelectSkills prompts for comma/space separated numbers or names;
-// supports "all". Empty answer selects nothing.
+// multiSelectSkills shows a checkbox picker over discovered skills,
+// pre-checking skills already bound to the agent.
 func (a *App) multiSelectSkills(discovered []contextinfo.DiscoveredSkill) ([]contextinfo.DiscoveredSkill, error) {
-	a.printf("%sEnter skills to upload (numbers/names, comma-separated; 'all' for every one; empty cancels):%s ",
-		cBold, cReset)
-	line, err := a.editor.ReadLine("")
-	if err != nil {
-		return nil, err
+	bound := map[string]bool{}
+	for _, b := range a.ctrl.Profile.SkillBindings {
+		bound[b.Name] = true
 	}
-	line = strings.TrimSpace(strings.ToLower(line))
-	if line == "" {
+	items := make([]pickItem, 0, len(discovered))
+	var preChecked []string
+	for _, d := range discovered {
+		desc := strings.ReplaceAll(d.Description, "\n", " ")
+		items = append(items, pickItem{id: d.Name, label: d.Name, desc: truncate(desc, 60)})
+		if bound[d.Name] {
+			preChecked = append(preChecked, d.Name)
+		}
+	}
+	pk := newPickerFull(a.in, a.out, items, 0,
+		"Sync skills",
+		"Only name+description are uploaded; SKILL.md bodies stay local.",
+		nil, 0).withMultiSelect(preChecked)
+	ids, ok := pk.RunMulti()
+	if !ok {
 		return nil, nil
-	}
-	tokens := strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' })
-	if len(tokens) == 1 && tokens[0] == "all" {
-		return discovered, nil
 	}
 	byName := map[string]contextinfo.DiscoveredSkill{}
 	for _, d := range discovered {
-		byName[strings.ToLower(d.Name)] = d
+		byName[d.Name] = d
 	}
 	var out []contextinfo.DiscoveredSkill
-	seen := map[string]bool{}
-	for _, tok := range tokens {
-		tok = strings.TrimSpace(tok)
-		var d contextinfo.DiscoveredSkill
-		var ok bool
-		if n, err := parseInt(tok); err == nil && n >= 1 && n <= len(discovered) {
-			d = discovered[n-1]
-			ok = true
-		} else if d, ok = byName[tok]; ok {
-		}
-		if ok && !seen[d.Name] {
-			seen[d.Name] = true
+	for _, id := range ids {
+		if d, ok := byName[id]; ok {
 			out = append(out, d)
 		}
 	}
@@ -146,20 +134,6 @@ func (a *App) multiSelectSkills(discovered []contextinfo.DiscoveredSkill) ([]con
 func isYes(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return s == "y" || s == "yes" || s == "allow"
-}
-
-func parseInt(s string) (int, error) {
-	n := 0
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0, fmt.Errorf("not int")
-		}
-		n = n*10 + int(r-'0')
-	}
-	if s == "" {
-		return 0, fmt.Errorf("empty")
-	}
-	return n, nil
 }
 
 func mergeSkillBindings(existing, fresh []ark.SkillBinding) []ark.SkillBinding {

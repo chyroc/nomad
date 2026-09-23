@@ -117,6 +117,12 @@ func (a *App) SetModel(model string) error {
 	return saveJSON(a.Paths.ProfileFile(), a.Profile)
 }
 
+// SetEffort persists the selected reasoning effort for future sessions.
+func (a *App) SetEffort(effort string) error {
+	a.Profile.Effort = effort
+	return saveJSON(a.Paths.ProfileFile(), a.Profile)
+}
+
 // SaveProfile persists the current provisioned profile.
 func (a *App) SaveProfile() error {
 	return saveJSON(a.Paths.ProfileFile(), a.Profile)
