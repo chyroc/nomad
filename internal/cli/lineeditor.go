@@ -286,12 +286,6 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 			b.WriteString(drainPaste())
 			pasted = append(pasted, normalizePasted(b.String()))
 
-		case r >= 32 && e.in.Buffered() > 0 && bufferedHasNewline():
-			var b strings.Builder
-			b.WriteRune(r)
-			b.WriteString(drainPaste())
-			pasted = append(pasted, normalizePasted(b.String()))
-
 		case r == 9:
 			if len(pasted) == 0 {
 				if c := slashComplete(e.completer, string(buf)); c != "" {
