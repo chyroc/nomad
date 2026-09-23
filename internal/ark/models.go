@@ -8,15 +8,25 @@ import (
 	"sort"
 )
 
+var hiddenModelNames = map[string]bool{
+	"deepseek-v4-pro":      true,
+	"deepseek-v4-flash-ga": true,
+}
+
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if models, err := c.listAgentModelsSigned(ctx); err == nil && len(models) > 0 {
+		models = collapseModelVersions(models)
 		c.writeModelCache(models)
 		return models, nil
 	}
 	if models, ok := c.readModelCache(); ok && len(models) > 0 {
 		return models, nil
 	}
-	return c.listInferenceModels(ctx)
+	models, err := c.listInferenceModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return collapseModelVersions(models), nil
 }
 
 func (c *Client) readModelCache() ([]ModelInfo, bool) {
@@ -140,6 +150,9 @@ func (c *Client) listAgentModelsSigned(ctx context.Context) ([]ModelInfo, error)
 func collapseModelVersions(models []ModelInfo) []ModelInfo {
 	byName := map[string]ModelInfo{}
 	for _, m := range models {
+		if hiddenModelNames[m.Name] {
+			continue
+		}
 		if existing, ok := byName[m.Name]; !ok || preferModelVersion(m, existing) {
 			byName[m.Name] = m
 		}
