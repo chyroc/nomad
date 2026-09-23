@@ -22,6 +22,10 @@ Ark. This file guides the coding agent working on the repository.
   `POST /sessions`. Never bypass that for a non-MA backend.
 - `internal/loop` is the backend-neutral event/Runner surface; `internal/ark`
   is the sole implementation.
+- **No full-screen TUI.** Nomad is a scrolling terminal chat: selectors,
+  prompts and status surfaces render inline on a few lines and then clear
+  themselves; they never use the alternate screen buffer, a full-window
+  layout, or capture the whole scrollback.
 - Session turns emit two `status_idle` kinds: `requires_action` after a
   tool call (keep waiting for the post-result running phase) and
   `end_turn` (the turn is finished). Don't treat `requires_action` as
