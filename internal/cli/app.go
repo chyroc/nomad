@@ -16,6 +16,7 @@ import (
 	"github.com/chyroc/nomad/internal/config"
 	"github.com/chyroc/nomad/internal/contextinfo"
 	"github.com/chyroc/nomad/internal/control"
+	"github.com/chyroc/nomad/internal/goal"
 	"github.com/chyroc/nomad/internal/hooks"
 	"github.com/chyroc/nomad/internal/loop"
 	"github.com/chyroc/nomad/internal/settings"
@@ -63,6 +64,14 @@ type App struct {
 	lastAnswer        string
 	skills            []contextinfo.DiscoveredSkill
 	assistantStreamed bool
+
+	goalStore        *goal.Store
+	goal             *goal.State
+	pendingGoal      string
+	goalKickoff      string
+	goalEvalFunc     func(ctx context.Context, modelID, systemPrompt, userPrompt string) (ark.GoalVerdict, error)
+	goalEvalFailures int
+	goalRetryDelay   func(attempt int) time.Duration
 
 	toolName string
 	toolArgs string
@@ -176,6 +185,9 @@ func (a *App) Run(ctx context.Context) error {
 	a.appSettings = loaded
 	a.hookRunner = hooks.NewExecutor(60 * time.Second)
 	a.hookConfig = loaded.HookConfig()
+	if err := a.initGoalStore(); err != nil {
+		return err
+	}
 	if a.model == "" {
 		a.model = app.Profile.Model
 	}

@@ -102,6 +102,18 @@ func (a *App) runTUI(ctx context.Context) error {
 			if quit {
 				return nil
 			}
+			if kickoff := a.goalKickoff; kickoff != "" {
+				a.goalKickoff = ""
+				if err := a.turn(ctx, transcript, kickoff, nil); err == nil {
+					_ = a.continueGoal(ctx, transcript,
+						func(text string, _ []loop.Attachment) error { return a.turn(ctx, transcript, text, nil) },
+						nil)
+				} else if errors.Is(err, ark.ErrInterrupted) {
+					a.printf("%sTurn interrupted; context retained.%s\n\n", cYellow, cReset)
+				} else {
+					a.printf("%s%v%s\n\n", cRed, err, cReset)
+				}
+			}
 			continue
 		}
 		if strings.HasPrefix(input, "!") {
@@ -114,6 +126,14 @@ func (a *App) runTUI(ctx context.Context) error {
 				continue
 			}
 			a.printf("%s%v%s\n\n", cRed, err, cReset)
+			continue
+		}
+		if err := a.continueGoal(ctx, transcript,
+			func(text string, _ []loop.Attachment) error { return a.turn(ctx, transcript, text, nil) },
+			nil); err != nil {
+			if errors.Is(err, ark.ErrInterrupted) {
+				a.printf("%sTurn interrupted; context retained.%s\n\n", cYellow, cReset)
+			}
 		}
 	}
 }
@@ -162,6 +182,7 @@ func (a *App) attachSession(ctx context.Context, transcript *store.SessionStore,
 	a.setRunner(runner)
 	a.sessionID = runner.SessionID()
 	a.installToolHooks(runner)
+	a.loadGoal()
 	if evs, err := transcript.Load(remoteID); err == nil {
 		a.replay(evs)
 	}
@@ -556,7 +577,7 @@ func (a *App) completeSlash(line string) []string {
 func slashCommandNames() []string {
 	return []string{
 		"/help", "/clear", "/copy", "/model", "/effort", "/status", "/diff", "/export", "/cost", "/resume", "/sessions",
-		"/session", "/skills", "/memory", "/permissions", "/config", "/init",
+		"/session", "/skills", "/memory", "/permissions", "/goal", "/config", "/init",
 		"/login", "/logout", "/exit",
 	}
 }

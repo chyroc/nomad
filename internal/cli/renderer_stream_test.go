@@ -16,7 +16,7 @@ func TestStreamRenderer(t *testing.T) {
 	r.OnEvent(loop.Event{Kind: loop.EvAssistantChunk, Content: "hi"})
 	r.OnEvent(loop.Event{Kind: loop.EvToolCall, ToolCall: &loop.ToolCall{ID: "t1", Name: "bash", Arguments: `{"command":"ls"}`}})
 	r.OnEvent(loop.Event{Kind: loop.EvToolResult, ToolCall: &loop.ToolCall{ID: "t1", Name: "bash"}, Result: "ok"})
-	r.Result("hi", "sesn-1", &loop.Usage{InputTokens: 5, OutputTokens: 2}, false)
+	r.Result("hi", "sesn-1", &loop.Usage{InputTokens: 5, OutputTokens: 2}, false, 1)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 5 {

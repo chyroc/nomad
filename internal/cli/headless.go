@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/chyroc/nomad/internal/ark"
+	ggoal "github.com/chyroc/nomad/internal/goal"
 	"github.com/chyroc/nomad/internal/loop"
 	"github.com/chyroc/nomad/internal/store"
 )
@@ -42,6 +44,18 @@ func (a *App) runHeadless(ctx context.Context) error {
 		return fmt.Errorf("UserPromptSubmit hook blocked the prompt")
 	}
 	defer runner.Close()
+	a.loadGoal()
+	if cond := strings.TrimSpace(a.opts.Goal); cond != "" {
+		cond, err := ggoal.ValidateCondition(cond)
+		if err != nil {
+			return err
+		}
+		st := ggoal.New(a.sessionID, cond, time.Now())
+		if err := a.goalStore.Save(st); err != nil {
+			return err
+		}
+		a.goal = st
+	}
 
 	var renderer loop.Observer
 	var collect *CollectRenderer
@@ -78,19 +92,38 @@ func (a *App) runHeadless(ctx context.Context) error {
 		atts = append(atts, att)
 	}
 
+	numTurns := 1
+	runTurn := func(text string, _ []loop.Attachment) error {
+		numTurns++
+		return runner.Run(ctx, text, nil)
+	}
+	emitCheck := func(c goalCheck) {
+		if a.opts.OutputFormat == FormatStreamJSON {
+			stream.GoalCheck(c.Iterations, c.Verdict, c.Reason)
+		}
+	}
+
 	err = runner.Run(ctx, prompt, atts)
+	if err == nil && a.goal != nil && a.goal.Active() {
+		err = a.continueGoal(ctx, transcript, runTurn, emitCheck)
+	}
+
+	finalGoal := a.goal
+	if st, loadErr := a.goalStore.Load(a.sessionID); loadErr == nil && st != nil {
+		finalGoal = st
+	}
 
 	switch a.opts.OutputFormat {
 	case FormatStreamJSON:
 		usage := lastUsage(transcript, a.sessionID)
-		stream.Result(lastText(transcript, a.sessionID), a.sessionID, usage, err != nil)
+		stream.Result(lastText(transcript, a.sessionID), a.sessionID, usage, err != nil, numTurns)
 	case FormatJSON:
 		out := map[string]interface{}{
 			"type":       "result",
 			"subtype":    "success",
 			"session_id": a.sessionID,
 			"result":     collect.Text.String(),
-			"num_turns":  1,
+			"num_turns":  numTurns,
 		}
 		if err != nil {
 			out["subtype"] = "error_during_execution"
@@ -99,6 +132,14 @@ func (a *App) runHeadless(ctx context.Context) error {
 		}
 		if collect.Usage != nil {
 			out["usage"] = collect.Usage
+		}
+		if finalGoal != nil {
+			out["goal"] = map[string]interface{}{
+				"condition":  finalGoal.Condition,
+				"status":     finalGoal.Status,
+				"iterations": finalGoal.Iterations,
+				"reason":     finalGoal.LastReason,
+			}
 		}
 		_ = json.NewEncoder(a.out).Encode(out)
 	default:

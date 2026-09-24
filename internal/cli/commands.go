@@ -35,6 +35,8 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 		a.foldMu.Unlock()
 		a.thinkingBuf.Reset()
 		a.thinkingStart = time.Time{}
+		a.goal = nil
+		a.pendingGoal = ""
 		a.printf("%sStarted a new session (created on first message).%s\n\n", cDim, cReset)
 		return false, nil
 	case "/copy":
@@ -127,6 +129,9 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 			return false, a.cmdPermissionRules(arg)
 		}
 		a.cmdPermissions()
+		return false, nil
+	case "/goal":
+		a.cmdGoal(arg)
 		return false, nil
 	case "/config":
 		a.cmdConfig(arg)
@@ -487,6 +492,7 @@ func commandHelp() string {
 		"  /skills [name]        list or show skills",
 		"  /memory [add text]    show or add global memory",
 		"  /permissions [list|allow|deny|remove]  permission mode and rules",
+		"  /goal <condition>     keep working until a goal check passes",
 		"  /config [key=value]   show or set configuration",
 		"  /init                 create a project NOMAD.md",
 		"  /login  /logout       sign in or out",

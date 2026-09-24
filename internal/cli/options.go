@@ -12,6 +12,7 @@ type Options struct {
 	Print        bool
 	OutputFormat OutputFormat
 	MaxTurns     int
+	Goal         string
 
 	Resume    string
 	Continue  bool
@@ -84,6 +85,8 @@ func ParseOptions(argv []string) (Options, error) {
 				return fmt.Errorf("invalid --max-turns: %w", err)
 			}
 			o.MaxTurns = n
+		case "goal":
+			o.Goal = value
 		case "permission-mode":
 			switch value {
 			case "default", "acceptEdits", "plan", "bypassPermissions":
@@ -225,6 +228,8 @@ CORE OPTIONS
   -c, --continue                    resume the most recent session
       --session-id <id>             attach to an existing remote session
       --max-turns <n>               maximum agentic turns (headless)
+      --goal <condition>            keep self-continuing until a tool-free
+                                    goal check confirms the condition
       --permission-mode <mode>      default|acceptEdits|plan|bypassPermissions
       --dangerously-skip-permissions   alias for bypassPermissions
       --allowed-tools bash,read,...  tool allow list

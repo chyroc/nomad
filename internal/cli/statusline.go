@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -17,6 +18,9 @@ func (a *App) statusline() string {
 	}
 	if a.sessionID != "" {
 		parts = append(parts, a.style(cDim, shortID(a.sessionID)))
+	}
+	if a.goal != nil && a.goal.Active() {
+		parts = append(parts, a.style(cGreen, "◉ goal "+strconv.Itoa(a.goal.Iterations)))
 	}
 	parts = append(parts, a.style(cDim, a.workdirShort()))
 	sep := a.style(cDim, " · ")

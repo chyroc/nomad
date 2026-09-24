@@ -134,6 +134,16 @@ func (s *StreamRenderer) toolResult(ev loop.Event) {
 	})
 }
 
+// GoalCheck emits one goal evaluator outcome as NDJSON.
+func (s *StreamRenderer) GoalCheck(iterations int, verdict, reason string) {
+	s.enc.Encode(map[string]interface{}{
+		"type":       "goal_check",
+		"iterations": iterations,
+		"verdict":    verdict,
+		"reason":     reason,
+	})
+}
+
 // Result is the final headless result message (stream-json and json).
 type Result struct {
 	Type         string  `json:"type"`
@@ -147,8 +157,8 @@ type Result struct {
 	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 }
 
-func (s *StreamRenderer) Result(text, sessionID string, usage *loop.Usage, isErr bool) {
-	r := Result{Type: "result", Subtype: "success", SessionID: sessionID, Result: text, NumTurns: 1}
+func (s *StreamRenderer) Result(text, sessionID string, usage *loop.Usage, isErr bool, numTurns int) {
+	r := Result{Type: "result", Subtype: "success", SessionID: sessionID, Result: text, NumTurns: numTurns}
 	if isErr {
 		r.Subtype = "error_during_execution"
 		r.IsError = true

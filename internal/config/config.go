@@ -39,6 +39,9 @@ func (p Paths) ProfileFile() string { return filepath.Join(p.DataDir, "profile.j
 // SessionsDir holds local JSONL transcripts.
 func (p Paths) SessionsDir() string { return filepath.Join(p.DataDir, "sessions") }
 
+// GoalsDir holds one goal state file per session id.
+func (p Paths) GoalsDir() string { return filepath.Join(p.DataDir, "goals") }
+
 // SkillsDir holds user-defined skills.
 func (p Paths) SkillsDir() string { return filepath.Join(p.DataDir, "skills") }
 
@@ -64,7 +67,7 @@ func (p Paths) CompatSettingsFile() string {
 func (p Paths) ModelsCache() string { return filepath.Join(p.DataDir, "models.json") }
 
 func (p Paths) Ensure() error {
-	for _, d := range []string{p.DataDir, p.SessionsDir(), p.SkillsDir()} {
+	for _, d := range []string{p.DataDir, p.SessionsDir(), p.SkillsDir(), p.GoalsDir()} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}

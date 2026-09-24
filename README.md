@@ -81,6 +81,22 @@ Flags: `-p/--print`, `--output-format text|json|stream-json`, `--model`,
 `--allowed-tools`, `--disallowed-tools`, `--system-prompt`,
 `--append-system-prompt`, `--add-dir`, `--image`, `--effort`, `--verbose`.
 
+### Goal mode (keep working until a condition is met)
+
+`--goal "<condition>"` keeps the session self-continuing after every
+turn: a separate, tool-free model call checks the transcript against the
+condition; when it is not met, its reason is injected as the next turn
+and work continues. It stops when the check confirms the goal, judges it
+impossible, the evaluator repeatedly fails, or the 50-turn safety cap is
+hit. Write a condition the evaluator can verify from conversation
+evidence alone (e.g. `"go test ./... exits 0"`). `stream-json` emits a
+`goal_check` event per evaluation; the final JSON carries a `goal`
+object. Example:
+
+```bash
+nomad -p --goal "the feature works and go test ./... exits 0" "implement X"
+```
+
 ## Skills
 
 Nomad discovers local `SKILL.md` bundles from:
@@ -117,11 +133,22 @@ global memory; `/init` scaffolds a project `NOMAD.md`.
 ## TUI commands
 
 `/help` `/clear` `/model` `/status` `/cost` `/resume` `/sessions`
-`/session` `/skills` (`/skills sync`) `/memory` `/permissions`
+`/session` `/skills` (`/skills sync`) `/memory` `/permissions` `/goal`
 `/config` `/init` `/login` `/logout` `/exit`.
 
 `Ctrl+C` interrupts a turn (also sends `user.interrupt` server-side) and
 keeps context; twice exits.
+
+### Session goals
+
+`/goal <condition>` arms a completion condition for the current session
+and immediately starts working. After every turn a separate tool-free
+check decides, from transcript evidence only, whether the condition is
+met; if not, the session self-continues with the check's reason. The
+status line shows `◉ goal N` while active. `/goal` shows status,
+`/goal clear` stops early, `/goal resume` reactivates a paused goal, and
+a new `/goal <condition>` replaces the current one. State is persisted
+under `~/.nomad/goals/`, so an active goal survives `/resume`.
 
 ## Architecture
 
@@ -133,6 +160,7 @@ keeps context; twice exits.
 | `internal/config` | Local file paths only (no provider domains) |
 | `internal/control` | Wires credentials, cached profile, client and runner |
 | `internal/contextinfo` | Memory and local skill discovery |
+| `internal/goal` | Session goal state, evaluator prompts and transcript formatting |
 | `internal/loop` | Backend-neutral event model and Runner interface |
 | `internal/store` | Local JSONL transcripts |
 
