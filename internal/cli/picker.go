@@ -83,9 +83,22 @@ func (p *picker) cursorRow() int {
 	io.WriteString(p.out, "\x1b[6n")
 	var buf []byte
 	gotEsc := false
-	deadline := time.After(time.Second)
+	// Bound the DSR wait: some terminals respond late or not at all,
+	// and a blocking ReadByte would hang the whole picker. Use a short
+	// read deadline on the underlying terminal and fall back to row 0
+	// (which the caller anchors to the bottom of the screen).
+	deadliner, _ := p.rawIn.(interface {
+		SetReadDeadline(time.Time) error
+	})
+	deadline := time.Now().Add(500 * time.Millisecond)
 	for {
+		if deadliner != nil {
+			_ = deadliner.SetReadDeadline(deadline)
+		}
 		b, err := p.in.ReadByte()
+		if deadliner != nil {
+			_ = deadliner.SetReadDeadline(time.Time{})
+		}
 		if err != nil {
 			return 0
 		}
@@ -106,10 +119,8 @@ func (p *picker) cursorRow() int {
 				buf = buf[:0]
 			}
 		}
-		select {
-		case <-deadline:
+		if time.Now().After(deadline) {
 			return 0
-		default:
 		}
 	}
 }
@@ -286,7 +297,11 @@ func (p *picker) RunFull() (pickResult, bool) {
 	}
 
 	erase := func() {
-		io.WriteString(p.out, fmt.Sprintf("\x1b[?25h\x1b[%d;1H\x1b[J", panelTop))
+		// Clear from the panel anchor to the end of the screen, show
+		// the cursor, then park it on a fresh line below the erased
+		// region so subsequent prompts do not overwrite or sit on top
+		// of the cleared panel.
+		io.WriteString(p.out, fmt.Sprintf("\x1b[?25h\x1b[%d;1H\x1b[J\n", panelTop))
 	}
 
 	deadliner, _ := p.rawIn.(interface {

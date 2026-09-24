@@ -56,9 +56,10 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 	}
 
 	if !nonInteractive {
-		a.printf("%sAbout to upload ONLY name+description (no SKILL.md body) for %d skill(s) and bind them to agent %s. Proceed? [y/N] %s",
+		a.printf("%sAbout to upload ONLY name+description (no SKILL.md body) for %d skill(s) and bind them to agent %s.%s\n",
 			cYellow, len(chosen), a.ctrl.Profile.AgentID, cReset)
-		line, _ := a.editor.ReadLine("")
+		a.printf("%sProceed? type y to confirm, anything else cancels:%s\n", cBold, cReset)
+		line, _ := a.editor.ReadLine("> ")
 		if !isYes(line) {
 			a.printf("%sAborted; no data uploaded.%s\n", cDim, cReset)
 			return nil
@@ -67,6 +68,7 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 
 	var bindings []ark.SkillBinding
 	for _, d := range chosen {
+		a.printf("%suploading %s metadata…%s\n", cDim, d.Name, cReset)
 		b, err := a.ctrl.Client.RegisterSkill(ctx, d.Name, d.Description)
 		if err != nil {
 			return fmt.Errorf("upload skill %s: %w", d.Name, err)
@@ -75,6 +77,7 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 		bindings = append(bindings, b)
 		a.printf("%s✓ registered %s (metadata only)%s\n", cGreen, d.Name, cReset)
 
+		a.printf("%slinking %s into workspace…%s\n", cDim, d.Name, cReset)
 		if err := ark.LinkLocalSkill(a.paths.Workspace, d.Name, d.Dir); err != nil {
 			return fmt.Errorf("link local skill %s: %w", d.Name, err)
 		}
@@ -82,6 +85,7 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 
 	existing := a.ctrl.Profile.SkillBindings
 	merged := mergeSkillBindings(existing, bindings)
+	a.printf("%sbinding %d skill(s) to agent…%s\n", cDim, len(merged), cReset)
 	if err := a.ctrl.Client.BindSkillsToAgent(ctx, a.ctrl.Profile.AgentID, merged); err != nil {
 		return fmt.Errorf("bind skills to agent: %w", err)
 	}
