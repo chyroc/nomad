@@ -157,6 +157,8 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 	switch a.opts.Subcommand {
+	case "web-server":
+		return a.RunWebServer()
 	case "login":
 		return a.runLogin(ctx)
 	case "logout":

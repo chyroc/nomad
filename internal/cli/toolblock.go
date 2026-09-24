@@ -368,9 +368,9 @@ func diffPreview(lines []diffLine, width int, numberedWrite bool) (preview, fold
 			break
 		}
 		if numberedWrite {
-			if l.kind == '+' {
-				preview = append(preview, cDim+fmt.Sprintf("%5d ", l.no)+cReset+
-					truncateToWidth(strings.TrimPrefix(l.text, "+"), max(width-6, 20)))
+			if l.Kind == '+' {
+				preview = append(preview, cDim+fmt.Sprintf("%5d ", l.NewNo)+cReset+
+					truncateToWidth(strings.TrimPrefix(l.Text, "+"), max(width-6, 20)))
 				n++
 			}
 			continue
@@ -382,12 +382,12 @@ func diffPreview(lines []diffLine, width int, numberedWrite bool) (preview, fold
 		preview = append(preview, cDim+fmt.Sprintf("     … +%d lines (ctrl+o to expand)", len(lines)-n)+cReset)
 	} else {
 		for _, l := range lines[n:] {
-			if numberedWrite && l.kind != '+' {
+			if numberedWrite && l.Kind != '+' {
 				continue
 			}
 			if numberedWrite {
-				preview = append(preview, cDim+fmt.Sprintf("%5d ", l.no)+cReset+
-					truncateToWidth(strings.TrimPrefix(l.text, "+"), max(width-6, 20)))
+				preview = append(preview, cDim+fmt.Sprintf("%5d ", l.NewNo)+cReset+
+					truncateToWidth(strings.TrimPrefix(l.Text, "+"), max(width-6, 20)))
 				continue
 			}
 			preview = append(preview, formatDiffLine(l, width))
@@ -397,13 +397,13 @@ func diffPreview(lines []diffLine, width int, numberedWrite bool) (preview, fold
 }
 
 func formatDiffLine(l diffLine, width int) string {
-	switch l.kind {
+	switch l.Kind {
 	case '+':
-		return cGreen + "+" + truncateToWidth(l.text, width-1) + cReset
+		return cGreen + "+" + truncateToWidth(l.Text, width-1) + cReset
 	case '-':
-		return cRed + "-" + truncateToWidth(l.text, width-1) + cReset
+		return cRed + "-" + truncateToWidth(l.Text, width-1) + cReset
 	default:
-		return cDim + " " + truncateToWidth(l.text, width-1) + cReset
+		return cDim + " " + truncateToWidth(l.Text, width-1) + cReset
 	}
 }
 
@@ -441,7 +441,7 @@ func diffCounts(name, args, workspace string) (added, removed int) {
 		return 0, 0
 	}
 	for _, l := range lines {
-		switch l.kind {
+		switch l.Kind {
 		case '+':
 			added++
 		case '-':

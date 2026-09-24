@@ -26,3 +26,8 @@ charmbracelet/
 
 # local agent workspace
 .claude/
+
+# embedded web-view build artifacts (run `make web`); source lives in frontend/
+/internal/webview/dist/*
+!/internal/webview/dist/.gitkeep
+internal/webview/frontend/node_modules/

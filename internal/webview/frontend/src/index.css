@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+:root {
+  --page: oklch(0.985 0.001 286.376);
+  --canvas: oklch(0.961 0.002 247.84);
+  --surface: oklch(1 0 0);
+  --inset: oklch(0.979 0.002 247.839);
+  --hover: oklch(0.97 0.002 247.839);
+  --hover-2: oklch(0.933 0.003 247.86);
+  --field: oklch(0.961 0.001 286.375);
+
+  --ink: oklch(0.247 0.006 258.361);
+  --ink-2: oklch(0.506 0.01 264.477);
+  --ink-3: oklch(0.695 0.009 264.505);
+
+  --line: oklch(0.946 0.003 264.542);
+  --line-strong: oklch(0.912 0.005 258.326);
+
+  --accent: oklch(0.626 0.205 254.947);
+  --accent-ink: oklch(0.556 0.187 255.617);
+  --accent-tint: oklch(0.96 0.019 252.878);
+
+  --green: oklch(0.603 0.155 150.883);
+  --green-tint: oklch(0.958 0.017 159.118);
+  --orange: oklch(0.689 0.179 49.902);
+  --orange-tint: oklch(0.964 0.021 67.581);
+  --red: oklch(0.621 0.192 23.042);
+  --red-tint: oklch(0.956 0.017 17.462);
+
+  --hairline: 0 0 0 1px var(--line);
+  --ring-btn: 0 0 0 1px var(--line-strong);
+  --ring-card: 0 0 0 1px var(--line), 0 1px 2px oklch(0 0 0 / 0.04), 0 2px 8px oklch(0 0 0 / 0.05);
+}
+
+.dark {
+  --page: oklch(0.209 0.004 264.477);
+  --canvas: oklch(0.231 0.004 264.487);
+  --surface: oklch(0.26 0.006 271.191);
+  --inset: oklch(0.243 0.004 264.492);
+  --hover: oklch(0.289 0.006 271.22);
+  --hover-2: oklch(0.318 0.007 274.747);
+  --field: oklch(0.293 0.006 271.223);
+
+  --ink: oklch(0.964 0.002 247.839);
+  --ink-2: oklch(0.731 0.008 260.731);
+  --ink-3: oklch(0.541 0.01 264.484);
+
+  --line: oklch(0.308 0.006 258.354);
+  --line-strong: oklch(0.356 0.007 264.474);
+
+  --accent: oklch(0.68 0.173 253.301);
+  --accent-ink: oklch(0.788 0.113 248.33);
+  --accent-tint: oklch(0.68 0.173 253.301 / 0.16);
+
+  --green: oklch(0.705 0.154 153.814);
+  --green-tint: oklch(0.705 0.154 153.814 / 0.14);
+  --orange: oklch(0.746 0.156 55.642);
+  --orange-tint: oklch(0.746 0.156 55.642 / 0.14);
+  --red: oklch(0.666 0.18 21.433);
+  --red-tint: oklch(0.666 0.18 21.433 / 0.14);
+
+  --hairline: 0 0 0 1px var(--line);
+  --ring-btn: 0 0 0 1px oklch(1 0 0 / 0.1), 0 1px 2px oklch(0 0 0 / 0.3);
+  --ring-card: 0 0 0 1px oklch(1 0 0 / 0.11), 0 1px 2px oklch(0 0 0 / 0.2), 0 2px 6px oklch(0 0 0 / 0.2);
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-inset: var(--inset);
+  --color-field: var(--field);
+  --color-hover: var(--hover);
+  --color-hover-2: var(--hover-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-tint: var(--accent-tint);
+  --color-green: var(--green);
+  --color-green-tint: var(--green-tint);
+  --color-orange: var(--orange);
+  --color-orange-tint: var(--orange-tint);
+  --color-red: var(--red);
+  --color-red-tint: var(--red-tint);
+
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-window: 14px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --animate-fade-up: fade-up 0.34s cubic-bezier(0.23, 1, 0.32, 1) both;
+  --animate-fade-in: fade-in 0.3s ease-out both;
+  --animate-pop-in: pop-in 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: none; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer-text {
+  from { background-position: 150% center; }
+  to { background-position: -50% center; }
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.shimmer-text {
+  background-image: linear-gradient(90deg, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 1.4s linear infinite;
+}
+
+.grid-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.3s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.grid-collapse.open { grid-template-rows: 1fr; opacity: 1; }
+.grid-collapse > .clip { min-height: 0; overflow: hidden; }
+
+/* markdown prose */
+.prose { font-size: 14px; line-height: 1.65; color: var(--ink); max-width: 660px; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose p { margin: 0 0 10px; }
+.prose ul, .prose ol { margin: 6px 0 10px; padding-left: 22px; }
+.prose li { margin: 3px 0; }
+.prose h1, .prose h2, .prose h3 { margin: 18px 0 8px; line-height: 1.3; }
+.prose h1 { font-size: 1.34em; }
+.prose h2 { font-size: 1.18em; }
+.prose h3 { font-size: 1.06em; }
+.prose a { color: var(--accent-ink); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.prose blockquote { margin: 10px 0; padding: 2px 13px; border-left: 2px solid var(--line-strong); color: var(--ink-2); }
+.prose table { border-collapse: collapse; margin: 10px 0; font-size: 13px; display: block; overflow-x: auto; }
+.prose th, .prose td { border: 1px solid var(--line); padding: 5px 11px; text-align: left; }
+.prose th { background: var(--inset); font-weight: 600; }
+.prose hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--field);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.prose pre {
+  margin: 10px 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--ring-card);
+  padding: 12px 13px;
+  overflow-x: auto;
+}
+.prose pre code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  white-space: pre;
+  background: none;
+  padding: 0;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid var(--page); }

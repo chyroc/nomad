@@ -137,6 +137,13 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 	case "/config":
 		a.cmdConfig(arg)
 		return false, nil
+	case "/web":
+		host, err := parseWebHost(arg)
+		if err != nil {
+			return false, err
+		}
+		a.opts.WebHost = host
+		return false, a.cmdWeb(ctx)
 	default:
 		return false, fmt.Errorf("unknown command %s (try /help)", cmd)
 	}
@@ -495,6 +502,7 @@ func commandHelp() string {
 		"  /permissions [list|allow|deny|remove]  permission mode and rules",
 		"  /goal <condition>     keep working until a goal check passes",
 		"  /config [key=value]   show or set configuration",
+		"  /web [--host h]      open session page (--host loopback default, all for LAN)",
 		"  /init                 create a project NOMAD.md",
 		"  /login  /logout       sign in or out",
 		"  /exit                 quit (also Ctrl+D)",

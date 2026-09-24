@@ -37,6 +37,9 @@ type Options struct {
 	Version bool
 	Help    bool
 
+	Web     bool
+	WebHost string
+
 	Subcommand string
 
 	PromptArgs []string
@@ -117,6 +120,10 @@ func ParseOptions(argv []string) (Options, error) {
 			o.Debug = boolValue(value, true)
 		case "dangerously-skip-permissions":
 			o.PermissionMode = "bypassPermissions"
+		case "web":
+			o.Web = boolValue(value, true)
+		case "web-host":
+			o.WebHost = value
 		case "version":
 			o.Version = boolValue(value, true)
 		case "help", "h":
@@ -130,7 +137,7 @@ func ParseOptions(argv []string) (Options, error) {
 	boolFlags := map[string]bool{
 		"p": true, "print": true, "c": true, "continue": true,
 		"verbose": true, "debug": true, "dangerously-skip-permissions": true,
-		"version": true, "help": true, "h": true,
+		"version": true, "help": true, "h": true, "web": true,
 	}
 
 	i := 0
@@ -138,7 +145,7 @@ func ParseOptions(argv []string) (Options, error) {
 		arg := argv[i]
 		switch {
 		case !strings.HasPrefix(arg, "-") || arg == "-":
-			if o.Subcommand == "" && (arg == "login" || arg == "logout") {
+			if o.Subcommand == "" && (arg == "login" || arg == "logout" || arg == "web-server") {
 				o.Subcommand = arg
 			} else {
 				o.PromptArgs = append(o.PromptArgs, arg)
@@ -244,12 +251,18 @@ CORE OPTIONS
                                     given local skills and bind them (comma list);
                                     interactive: /skills sync
       --image <path|url>             attach an image (repeatable)
+      --web                         open the session web view on startup
+      --web-host loopback|all       web bind host (default loopback; all = LAN)
       --verbose                      verbose output (also enables stream messages)
       --version --help
 
+SUBCOMMANDS
+  nomad web-server [--web-host h]  run the shared web server (normally started
+                                    automatically; one per machine, one port)
+
 TUI COMMANDS
   /help /clear /model /effort /status /diff /export /cost /resume /sessions
-  /skills /memory /permissions /config /init /login /logout /exit
+  /skills /memory /permissions /config /init /login /logout /web /exit
 
 `
 }

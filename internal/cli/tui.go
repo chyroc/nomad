@@ -44,6 +44,7 @@ func (a *App) runTUI(ctx context.Context) error {
 		a.style(cBold, ""), cReset, a.style(cGreen, "managed-agents"),
 		a.style(cCyan, a.model), a.style(cDim, a.paths.Workspace))
 	a.printf("%s /help for commands · /model to switch · Ctrl+C interrupt, twice to quit%s\n\n", cDim, cReset)
+	a.maybeAutoStartWeb(ctx)
 
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt)
@@ -986,7 +987,7 @@ func (a *App) completeSlash(line string) []string {
 func slashCommandNames() []string {
 	return []string{
 		"/help", "/clear", "/copy", "/model", "/effort", "/status", "/diff", "/export", "/cost", "/resume", "/sessions",
-		"/session", "/skills", "/memory", "/permissions", "/goal", "/config", "/init",
+		"/session", "/skills", "/memory", "/permissions", "/goal", "/config", "/web", "/init",
 		"/login", "/logout", "/exit",
 	}
 }

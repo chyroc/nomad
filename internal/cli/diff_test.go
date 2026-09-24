@@ -17,18 +17,18 @@ func TestUnifiedDiffInsert(t *testing.T) {
 	lines := unifiedDiff("a\nc", "a\nb\nc")
 	var plus, minus, at int
 	for _, l := range lines {
-		switch l.kind {
+		switch l.Kind {
 		case '+':
 			plus++
-			if l.text != "b" {
-				t.Errorf("added line = %q", l.text)
+			if l.Text != "b" {
+				t.Errorf("added line = %q", l.Text)
 			}
 		case '-':
 			minus++
 		case '@':
 			at++
-			if !strings.HasPrefix(l.text, "@@ ") {
-				t.Errorf("hunk header malformed: %q", l.text)
+			if !strings.HasPrefix(l.Text, "@@ ") {
+				t.Errorf("hunk header malformed: %q", l.Text)
 			}
 		}
 	}
@@ -41,7 +41,7 @@ func TestUnifiedDiffReplace(t *testing.T) {
 	lines := unifiedDiff("one\ntwo\nthree", "one\nTWO\nthree")
 	var plus, minus int
 	for _, l := range lines {
-		switch l.kind {
+		switch l.Kind {
 		case '+':
 			plus++
 		case '-':
@@ -57,7 +57,7 @@ func TestUnifiedDiffDeleteAll(t *testing.T) {
 	lines := unifiedDiff("a\nb", "")
 	minus := 0
 	for _, l := range lines {
-		if l.kind == '-' {
+		if l.Kind == '-' {
 			minus++
 		}
 	}
