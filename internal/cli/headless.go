@@ -103,7 +103,7 @@ func (a *App) newRunner(ctx context.Context, remoteSessionID string, ask func(st
 		Profile:         a.ctrl.Profile,
 		SessionID:       remoteSessionID,
 		Workspace:       a.paths.Workspace,
-		SystemPrompt:    a.sessionSystem(),
+		SystemPrompt:    a.sessionSystem(ctx),
 		Model:           a.model,
 		Permission:      a.permMode(),
 		AllowedTools:    allowed,

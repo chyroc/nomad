@@ -187,9 +187,9 @@ func (a *App) Run(ctx context.Context) error {
 	return a.runTUI(ctx)
 }
 
-// sessionSystem builds the system prompt addendum from memory/skills and
-// CLI flags.
-func (a *App) sessionSystem() string {
+// sessionSystem builds the system prompt addendum from memory/skills,
+// the local environment snapshot and CLI flags.
+func (a *App) sessionSystem(ctx context.Context) string {
 	b := contextinfo.Load(a.paths.MemoryFile(), a.paths.Workspace)
 	for _, d := range a.skills {
 		b.Skills = append(b.Skills, d.Skill)
@@ -201,14 +201,16 @@ func (a *App) sessionSystem() string {
 	if s := a.boundSkillLocalHint(); s != "" {
 		parts = append(parts, s)
 	}
-	if a.opts.SystemPrompt != "" {
-		if data, err := os.ReadFile(strings.TrimPrefix(a.opts.SystemPrompt, "@")); err == nil &&
-			strings.HasPrefix(a.opts.SystemPrompt, "@") {
-			parts = append(parts, string(data))
+	if s := a.opts.SystemPrompt; s != "" {
+		if strings.HasPrefix(s, "@") {
+			if data, err := os.ReadFile(strings.TrimPrefix(s, "@")); err == nil {
+				parts = append(parts, string(data))
+			}
 		} else {
-			parts = append(parts, a.opts.SystemPrompt)
+			parts = append(parts, s)
 		}
 	}
+	parts = append(parts, contextinfo.GatherEnvironment(ctx, a.paths.Workspace, a.model, a.opts.ReasoningEffort).Render())
 	return strings.Join(parts, "\n\n")
 }
 

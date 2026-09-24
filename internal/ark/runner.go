@@ -157,9 +157,11 @@ func (r *Runner) createSession(ctx context.Context, p Profile) error {
 		}
 		overrides["model"] = modelOverride
 	}
+	systemPrompt := codingSystemPrompt
 	if strings.TrimSpace(r.cfg.SystemPrompt) != "" {
-		overrides["system"] = codingSystemPrompt + "\n\n" + strings.TrimSpace(r.cfg.SystemPrompt)
+		systemPrompt += "\n\n" + strings.TrimSpace(r.cfg.SystemPrompt)
 	}
+	overrides["system"] = systemPrompt
 
 	ref := session.NewAgentRefAgentIdentifier(agentRef)
 	req := &session.CreateSessionRequest{
