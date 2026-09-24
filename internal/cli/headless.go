@@ -108,6 +108,13 @@ func (a *App) runHeadless(ctx context.Context) error {
 		err = a.continueGoal(ctx, transcript, runTurn, emitCheck)
 	}
 
+	subtype := SubtypeSuccess
+	if errors.Is(err, loop.ErrMaxTurns) {
+		subtype = SubtypeMaxTurns
+	} else if err != nil {
+		subtype = SubtypeErrorRun
+	}
+
 	finalGoal := a.goal
 	if st, loadErr := a.goalStore.Load(a.sessionID); loadErr == nil && st != nil {
 		finalGoal = st
@@ -116,19 +123,24 @@ func (a *App) runHeadless(ctx context.Context) error {
 	switch a.opts.OutputFormat {
 	case FormatStreamJSON:
 		usage := lastUsage(transcript, a.sessionID)
-		stream.Result(lastText(transcript, a.sessionID), a.sessionID, usage, err != nil, numTurns)
+		stream.Result(lastText(transcript, a.sessionID), a.sessionID, usage, subtype, numTurns)
 	case FormatJSON:
 		out := map[string]interface{}{
 			"type":       "result",
-			"subtype":    "success",
+			"subtype":    subtype,
 			"session_id": a.sessionID,
 			"result":     collect.Text.String(),
 			"num_turns":  numTurns,
 		}
-		if err != nil {
-			out["subtype"] = "error_during_execution"
+		if subtype != SubtypeSuccess {
 			out["is_error"] = true
 			out["result"] = err.Error()
+		}
+		if subtype == SubtypeMaxTurns {
+			out["errors"] = []string{"Reached maximum number of turns"}
+			out["terminal_reason"] = "max_turns"
+		} else {
+			out["terminal_reason"] = "completed"
 		}
 		if collect.Usage != nil {
 			out["usage"] = collect.Usage

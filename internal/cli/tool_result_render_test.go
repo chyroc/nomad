@@ -17,8 +17,8 @@ func TestFinishToolCollapsesMultiLineSuccess(t *testing.T) {
 	a := &App{out: &buf, color: false}
 	a.finishTool(toolResultEvent("bash", "one\ntwo\nthree", false))
 	out := buf.String()
-	if !strings.Contains(out, "3 lines") || !strings.Contains(out, "Ctrl+O") {
-		t.Fatalf("multi-line success should collapse: %q", out)
+	if !strings.Contains(out, "⎿  one") || !strings.Contains(out, "ctrl+o to expand") {
+		t.Fatalf("multi-line success should collapse to one summary line: %q", out)
 	}
 	if strings.Contains(out, "\n  two\n") {
 		t.Fatalf("body lines must not be expanded: %q", out)
@@ -30,11 +30,23 @@ func TestFinishToolInlinesTinySuccess(t *testing.T) {
 	a := &App{out: &buf, color: false}
 	a.finishTool(toolResultEvent("bash", "single short", false))
 	out := buf.String()
-	if !strings.Contains(out, "single short") {
+	if !strings.Contains(out, "⎿  single short") {
 		t.Fatalf("tiny result should be inline: %q", out)
 	}
-	if strings.Contains(out, "Ctrl+O") {
+	if strings.Contains(out, "ctrl+o") {
 		t.Fatalf("tiny result should not show fold hint: %q", out)
+	}
+}
+
+func TestFinishToolWriteSummary(t *testing.T) {
+	var buf bytes.Buffer
+	a := &App{out: &buf, color: false}
+	a.rememberToolArgs("t1", `{"file_path":"x.txt","content":"a\nb\nc"}`)
+	ev := toolResultEvent("write", "File created successfully at: x.txt", false)
+	ev.ToolCall = &loop.ToolCall{ID: "t1", Name: "write"}
+	a.finishTool(ev)
+	if !strings.Contains(buf.String(), "Wrote 3 lines to x.txt") {
+		t.Fatalf("write summary missing: %q", buf.String())
 	}
 }
 

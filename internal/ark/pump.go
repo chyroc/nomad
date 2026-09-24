@@ -22,9 +22,43 @@ var ErrInterrupted = errors.New("interrupted")
 // compensation loop, which can otherwise postpone shutdown indefinitely.
 const terminalGrace = 1500 * time.Millisecond
 
+// turnState tracks per-run progress for the --max-turns model-round cap.
+type turnState struct {
+	modelCalls int
+	abortSent  bool
+}
+
+// capped reports whether the --max-turns round cap is engaged.
+func (r *Runner) capped() bool {
+	return r.maxToolTurns > 0 && r.cappedFlag.Load()
+}
+
+// overCap reports whether another model round would exceed --max-turns.
+func (r *Runner) overCap(st *turnState) bool {
+	return r.maxToolTurns > 0 && st.modelCalls >= r.maxToolTurns
+}
+
+// abortForMaxTurns flags the gate and asks the server to stop the turn.
+func (r *Runner) abortForMaxTurns(st *turnState) {
+	if st.abortSent {
+		return
+	}
+	st.abortSent = true
+	if r.cappedFlag != nil {
+		r.cappedFlag.Store(true)
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = r.Interrupt(ctx)
+	}()
+}
+
 func (r *Runner) pump(ctx context.Context, stream *selfhosted.EventStream, toolResults <-chan selfhosted.ToolCallResult) error {
 	events := stream.Events()
 	var graceC <-chan time.Time
+	st := &turnState{}
+	r.cappedFlag.Store(false)
 
 	for {
 		select {
@@ -50,7 +84,10 @@ func (r *Runner) pump(ctx context.Context, stream *selfhosted.EventStream, toolR
 				}
 				return errors.New("ma: event stream closed before session went idle")
 			}
-			idle, terminated, err := r.handleStreamEvent(ev)
+			idle, terminated, err := r.handleStreamEvent(ev, st)
+			if errors.Is(err, ErrInterrupted) && r.capped() {
+				return loop.ErrMaxTurns
+			}
 			if err != nil {
 				return err
 			}
@@ -59,6 +96,9 @@ func (r *Runner) pump(ctx context.Context, stream *selfhosted.EventStream, toolR
 				return nil
 			}
 			if idle && graceC == nil {
+				if r.capped() {
+					return loop.ErrMaxTurns
+				}
 				usage := r.usage
 				r.emit(loop.Event{Kind: loop.EvTurnEnd, Usage: &usage})
 				graceC = time.After(terminalGrace)
@@ -67,26 +107,32 @@ func (r *Runner) pump(ctx context.Context, stream *selfhosted.EventStream, toolR
 	}
 }
 
-func (r *Runner) handleStreamEvent(ev selfhosted.Event) (idle, terminated bool, err error) {
+func (r *Runner) handleStreamEvent(ev selfhosted.Event, st *turnState) (idle, terminated bool, err error) {
 	switch ev.Type {
-	case "agent.message":
+	case "agent.message", "agent.thinking", "agent.tool_use":
+		if r.overCap(st) {
+			r.abortForMaxTurns(st)
+		}
+		if ev.Type == "agent.tool_use" {
+			r.emit(loop.Event{Kind: loop.EvToolCall, ToolCall: &loop.ToolCall{
+				ID: ev.ToolUseID, Name: ev.Name, Arguments: string(ev.Input),
+			}})
+			return false, false, nil
+		}
+		if ev.Type == "agent.thinking" {
+			if text := textFromBlocks(ev.Content); text != "" {
+				r.emit(loop.Event{Kind: loop.EvAssistantThinking, Content: text})
+			}
+			return false, false, nil
+		}
 		text := textFromBlocks(ev.Content)
 		if text != "" {
 			r.emit(loop.Event{Kind: loop.EvAssistantChunk, Content: text})
 			r.emit(loop.Event{Kind: loop.EvAssistantMessage, Content: text})
 		}
 
-	case "agent.thinking":
-		if text := textFromBlocks(ev.Content); text != "" {
-			r.emit(loop.Event{Kind: loop.EvAssistantThinking, Content: text})
-		}
-
-	case "agent.tool_use":
-		r.emit(loop.Event{Kind: loop.EvToolCall, ToolCall: &loop.ToolCall{
-			ID: ev.ToolUseID, Name: ev.Name, Arguments: string(ev.Input),
-		}})
-
 	case "span.model_request_end":
+		st.modelCalls++
 		if raw, ok := ev.Extra["model_usage"]; ok {
 			var u struct {
 				InputTokens  int `json:"input_tokens"`

@@ -24,7 +24,7 @@ func TestReplayRichRendering(t *testing.T) {
 	}
 	a.replay(evs)
 	out := buf.String()
-	for _, want := range []string{"> do the thing", "thought 1", "⏺", "bash", "✓", "done", "7 tokens"} {
+	for _, want := range []string{"❯ do the thing", "Thought", "bash", "⎿  ok", "done", "✻ Worked for"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("replay output missing %q:\n%s", want, out)
 		}
@@ -44,7 +44,7 @@ func TestReplayErrorAndFold(t *testing.T) {
 		{Kind: loop.EvError, Content: "boom"},
 	})
 	out := buf.String()
-	if !strings.Contains(out, "✗") || !strings.Contains(out, "boom") {
+	if !strings.Contains(out, "⎿") || !strings.Contains(out, "boom") {
 		t.Fatalf("error replay wrong:\n%s", out)
 	}
 	if !strings.Contains(out, "more lines") {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -127,6 +128,10 @@ func (a *App) runTUI(ctx context.Context) error {
 				a.printf("%sTurn interrupted; context retained.%s\n\n", cYellow, cReset)
 				continue
 			}
+			if errors.Is(err, loop.ErrMaxTurns) {
+				a.printf("%sReached maximum number of turns; context retained.%s\n\n", cYellow, cReset)
+				continue
+			}
 			a.printf("%s%v%s\n\n", cRed, err, cReset)
 			continue
 		}
@@ -145,7 +150,7 @@ var errEOF = errors.New("eof")
 func (a *App) readInput() (string, error) {
 	var input string
 	for {
-		prompt := a.style(cBold, "> ")
+		prompt := a.style(cBold, "❯ ")
 		if input != "" {
 			prompt = a.style(cDim, "… ")
 		}
@@ -294,6 +299,7 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		a.flushThinking()
 		a.finishActivity("")
 		if ev.ToolCall != nil {
+			a.rememberToolArgs(ev.ToolCall.ID, ev.ToolCall.Arguments)
 			a.beginTool(ev.ToolCall.Name, ev.ToolCall.Arguments)
 		}
 	case loop.EvToolResult:
@@ -301,12 +307,11 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 	case loop.EvTurnEnd:
 		a.flushThinking()
 		a.finishActivity("")
-		elapsed := a.elapsedTurn()
-		if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
-			a.printf("%s%d tokens · ↑%d ↓%d · %s%s\n", cDim, ev.Usage.InputTokens+ev.Usage.OutputTokens, ev.Usage.InputTokens, ev.Usage.OutputTokens, formatTurnDuration(elapsed), cReset)
-		} else if elapsed > 0 {
-			a.printf("%s%s%s\n", cDim, formatTurnDuration(elapsed), cReset)
+		line := turnEndLine(time.Now(), a.elapsedTurn())
+		if ev.Usage != nil && a.opts.Verbose {
+			line += a.style(cDim, fmt.Sprintf(" · ↑%d ↓%d tokens", ev.Usage.InputTokens, ev.Usage.OutputTokens))
 		}
+		a.printf("%s\n", line)
 		go a.runStopHooks(context.Background(), a.sessionID)
 	case loop.EvError:
 		a.finishActivity("")
@@ -321,16 +326,18 @@ func (a *App) renderAnswer(text string) {
 	if text == "" {
 		return
 	}
+	anchor := ""
 	if !a.answerAnchorPrinted {
-		a.printf("%s●%s\n", cPurple, cReset)
+		anchor = a.style(cPurple, "● ") + cReset
 		a.answerAnchorPrinted = true
 	}
 	if a.color {
 		width, _ := cachedTermSize()
-		a.printf("%s\n", renderMarkdown(text, width, true))
+		rendered := strings.TrimLeft(renderMarkdown(text, width, true), "\n")
+		a.printf("%s%s", anchor, rendered)
 		return
 	}
-	a.printf("%s\n\n", text)
+	a.printf("%s%s\n\n", anchor, text)
 }
 
 // startActivity shows the global working indicator.
@@ -368,8 +375,66 @@ func (a *App) renderToolCallLine(name, arguments string) {
 	a.toolName = name
 	a.toolArgs = arguments
 	display := toolInvocation(name, arguments, 90)
-	a.printf("%s %s%s\n", a.style(cPurple, "⏺"), a.style(cBold, name), display)
+	a.printf("%s%s%s\n", a.style(cPurple, "● "), a.style(cBold, name), display)
 	a.renderToolDiff(name, arguments)
+}
+
+// rememberToolArgs caches one call's arguments so the matching result
+// event can render a per-tool summary line.
+func (a *App) rememberToolArgs(id, args string) {
+	a.foldMu.Lock()
+	defer a.foldMu.Unlock()
+	if a.toolArgsByID == nil {
+		a.toolArgsByID = map[string]string{}
+	}
+	if len(a.toolArgsByID) > 64 {
+		a.toolArgsByID = map[string]string{}
+	}
+	a.toolArgsByID[id] = args
+}
+
+func (a *App) lookupToolArgs(id string) string {
+	a.foldMu.Lock()
+	defer a.foldMu.Unlock()
+	return a.toolArgsByID[id]
+}
+
+// toolResultSummary builds the one-line result digest shown after ⎿.
+func toolResultSummary(name, args, result string) string {
+	var parsed map[string]any
+	if args != "" {
+		_ = json.Unmarshal([]byte(args), &parsed)
+	}
+	str := func(k string) string { v, _ := parsed[k].(string); return v }
+	switch name {
+	case "write":
+		path := str("file_path")
+		if path == "" {
+			path = str("path")
+		}
+		if n := strings.Count(str("content"), "\n") + 1; path != "" {
+			return fmt.Sprintf("Wrote %d lines to %s", n, path)
+		}
+	case "edit":
+		path := str("file_path")
+		if path == "" {
+			path = str("path")
+		}
+		added := strings.Count(str("new_string"), "\n") + 1
+		removed := strings.Count(str("old_string"), "\n") + 1
+		if path != "" {
+			return fmt.Sprintf("Added %d lines, removed %d lines", added, removed)
+		}
+	}
+	first := strings.TrimSpace(strings.Split(strings.TrimSpace(result), "\n")[0])
+	if first == "" {
+		return "(No output)"
+	}
+	r := []rune(first)
+	if len(r) > 72 {
+		return string(r[:72]) + "…"
+	}
+	return first
 }
 
 // renderThinkingFold registers and prints one reasoning block as a
@@ -379,42 +444,48 @@ func (a *App) renderThinkingFold(lines []string, started time.Time) {
 		return
 	}
 	a.registerFold("reasoning", lines)
-	dur := ""
+	clause := ""
 	if !started.IsZero() {
-		dur = " · " + time.Since(started).Round(time.Second).String()
+		clause = " for " + formatThoughtDuration(time.Since(started))
 	}
-	preview := strings.TrimSpace(lines[0])
-	if len([]rune(preview)) > 60 {
-		preview = string([]rune(preview)[:60]) + "…"
-	}
-	a.printf("  %s✦ thought %d lines%s  — %s  (Ctrl+O)%s\n",
-		cDim, len(lines), dur, preview, cReset)
+	a.printf("%sThought%s (ctrl+o to expand)%s\n", cDim, clause, cReset)
+}
+
+// turnEndLine renders the post-turn summary line.
+func turnEndLine(end time.Time, elapsed time.Duration) string {
+	return fmt.Sprintf("%s✻ Worked for %s · done %s%s", cDim, formatThoughtDuration(elapsed), end.Format("3:04 PM"), cReset)
 }
 
 func (a *App) finishTool(ev loop.Event) {
 	a.finishActivity("")
-	okMark, color := "✓", cDim
+	color := cDim
 	if ev.IsError {
-		okMark, color = "✗", cRed
+		color = cRed
 	}
+	id := ""
+	if ev.ToolCall != nil {
+		id = ev.ToolCall.ID
+	}
+	summary := toolResultSummary(ev.ToolName, a.lookupToolArgs(id), ev.Result)
 	body := strings.TrimSpace(ev.Result)
 	if body == "" {
-		body = "(no output)"
+		body = "(No output)"
 	}
 	lines := strings.Split(body, "\n")
-	a.printf("%s %s %s%s\n", color, okMark, a.style(cBold, ev.ToolName), cReset)
 
-	// Errors and tiny single-line results stay inline; successful
-	// output (even a few lines) collapses to one expandable summary by
-	// default, matching a compact tool transcript.
-	if !ev.IsError && !isTinyResult(lines) {
-		a.registerFold(ev.ToolName, lines)
-		preview := strings.TrimSpace(lines[0])
-		a.printf("%s  %d %s%s\n", cDim, len(lines), resultNoun(len(lines)),
-			a.toolSummarySuffix(preview))
+	if ev.IsError {
+		a.printf("%s  ⎿  %s%s\n", color, summary, cReset)
+		if len(lines) > 1 {
+			a.renderFoldable(ev.ToolName, body, color)
+		}
 		return
 	}
-	a.renderFoldable(ev.ToolName, body, color)
+	if isTinyResult(lines) {
+		a.printf("%s  ⎿  %s%s\n", color, summary, cReset)
+		return
+	}
+	a.registerFold(ev.ToolName, lines)
+	a.printf("%s  ⎿  %s%s\n", color, summary, a.style(cDim, " (ctrl+o to expand)"))
 }
 
 // isTinyResult reports whether a result is short enough to show inline
@@ -539,7 +610,7 @@ func (a *App) replay(evs []loop.Event) {
 		case loop.EvUserMessage:
 			flush()
 			turnStart = ev.Time
-			a.printf("%s %s\n", a.style(cBold, ">"), ev.Content)
+			a.printf("%s %s\n", a.style(cBold, "❯"), ev.Content)
 		case loop.EvAssistantChunk:
 		case loop.EvAssistantMessage:
 			flush()
@@ -552,6 +623,7 @@ func (a *App) replay(evs []loop.Event) {
 		case loop.EvToolCall:
 			flush()
 			if ev.ToolCall != nil {
+				a.rememberToolArgs(ev.ToolCall.ID, ev.ToolCall.Arguments)
 				a.renderToolCallLine(ev.ToolCall.Name, ev.ToolCall.Arguments)
 			}
 		case loop.EvToolResult:
@@ -563,22 +635,16 @@ func (a *App) replay(evs []loop.Event) {
 			a.finishTool(ev)
 		case loop.EvTurnEnd:
 			flush()
-			line := ""
-			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
-				line = fmt.Sprintf("%d tokens · ↑%d ↓%d",
-					ev.Usage.InputTokens+ev.Usage.OutputTokens,
-					ev.Usage.InputTokens, ev.Usage.OutputTokens)
-			}
-			if !turnStart.IsZero() && !ev.Time.IsZero() {
-				if d := ev.Time.Sub(turnStart); d > 0 {
-					if line != "" {
-						line += " · "
-					}
-					line += formatTurnDuration(d)
+			if !ev.Time.IsZero() {
+				elapsed := time.Duration(0)
+				if !turnStart.IsZero() {
+					elapsed = ev.Time.Sub(turnStart)
 				}
-			}
-			if line != "" {
-				a.printf("%s%s%s\n", cDim, line, cReset)
+				line := turnEndLine(ev.Time, elapsed)
+				if ev.Usage != nil && a.opts.Verbose {
+					line += a.style(cDim, fmt.Sprintf(" · ↑%d ↓%d tokens", ev.Usage.InputTokens, ev.Usage.OutputTokens))
+				}
+				a.printf("%s\n", line)
 			}
 		case loop.EvError:
 			flush()

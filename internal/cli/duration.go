@@ -20,6 +20,19 @@ func formatTurnDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm%02ds", int(d/time.Minute), int((d%time.Minute)/time.Second))
 }
 
+// formatThoughtDuration renders thinking/turn durations the way the
+// reference CLI collapses them ("6s", "1m 4s").
+func formatThoughtDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return d.String()
+	}
+	return fmt.Sprintf("%dm %ds", int(d/time.Minute), int((d%time.Minute)/time.Second))
+}
+
 func (a *App) elapsedTurn() time.Duration {
 	a.turnMu.Lock()
 	start := a.turnStart

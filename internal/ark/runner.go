@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/volcengine/ark-runtime-go/arkruntime/model/session"
@@ -48,8 +49,10 @@ type Runner struct {
 	rules           *ruleSet
 	reasoningEffort string
 
-	sessionID string
-	cfg       RunConfig
+	sessionID    string
+	cfg          RunConfig
+	maxToolTurns int
+	cappedFlag   *atomic.Bool
 
 	drainHookContext func() string
 
@@ -141,6 +144,7 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		return strings.TrimSpace(ctx)
 	}
 	var r *Runner
+	capped := &atomic.Bool{}
 	tools, err := newGatedToolSet(o.Workspace, toolTimeout, gateOptions{
 		mode:           perm,
 		allowed:        allowed,
@@ -148,7 +152,7 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		rulesProvider:  rulesHolder.snapshot,
 		sessionGranted: sessionSnapshot,
 		ask:            ask,
-		maxToolTurns:   o.MaxToolTurns,
+		capped:         capped,
 		preHookProvider: func() func(context.Context, string, json.RawMessage) hooks.Outcome {
 			if r == nil {
 				return nil
@@ -180,6 +184,8 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		drainHookContext: drainHookContext,
 		toolHooks:        toolHookPair{pre: o.PreToolUse, post: o.PostToolUse},
 		reasoningEffort:  o.ReasoningEffort,
+		maxToolTurns:     o.MaxToolTurns,
+		cappedFlag:       capped,
 		cfg: RunConfig{
 			Model:           o.Model,
 			SystemPrompt:    o.SystemPrompt,

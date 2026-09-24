@@ -7,8 +7,13 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrMaxTurns is returned when a turn is cut short by the --max-turns
+// model-round cap, mirroring the reference CLI's error_max_turns result.
+var ErrMaxTurns = errors.New("reached --max-turns limit")
 
 // Event kinds emitted during a turn.
 const (

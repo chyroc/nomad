@@ -182,6 +182,9 @@ func ParseOptions(argv []string) (Options, error) {
 	if o.Resume != "" && o.Continue {
 		return o, errors.New("--resume and --continue are mutually exclusive")
 	}
+	if o.Print && o.OutputFormat == FormatStreamJSON && !o.Verbose {
+		return o, errors.New("When using --print, --output-format=stream-json requires --verbose")
+	}
 	return o, nil
 }
 

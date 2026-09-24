@@ -146,22 +146,37 @@ func (s *StreamRenderer) GoalCheck(iterations int, verdict, reason string) {
 
 // Result is the final headless result message (stream-json and json).
 type Result struct {
-	Type         string  `json:"type"`
-	Subtype      string  `json:"subtype"`
-	SessionID    string  `json:"session_id"`
-	Result       string  `json:"result"`
-	IsError      bool    `json:"is_error"`
-	NumTurns     int     `json:"num_turns"`
-	InputTokens  int     `json:"input_tokens,omitempty"`
-	OutputTokens int     `json:"output_tokens,omitempty"`
-	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
+	Type           string   `json:"type"`
+	Subtype        string   `json:"subtype"`
+	SessionID      string   `json:"session_id"`
+	Result         string   `json:"result"`
+	IsError        bool     `json:"is_error"`
+	NumTurns       int      `json:"num_turns"`
+	Errors         []string `json:"errors,omitempty"`
+	TerminalReason string   `json:"terminal_reason,omitempty"`
+	InputTokens    int      `json:"input_tokens,omitempty"`
+	OutputTokens   int      `json:"output_tokens,omitempty"`
+	TotalCostUSD   float64  `json:"total_cost_usd,omitempty"`
 }
 
-func (s *StreamRenderer) Result(text, sessionID string, usage *loop.Usage, isErr bool, numTurns int) {
-	r := Result{Type: "result", Subtype: "success", SessionID: sessionID, Result: text, NumTurns: numTurns}
-	if isErr {
-		r.Subtype = "error_during_execution"
+// Subtype constants for Result envelopes.
+const (
+	SubtypeSuccess  = "success"
+	SubtypeMaxTurns = "error_max_turns"
+	SubtypeErrorRun = "error_during_execution"
+)
+
+func (s *StreamRenderer) Result(text, sessionID string, usage *loop.Usage, subtype string, numTurns int) {
+	r := Result{Type: "result", Subtype: subtype, SessionID: sessionID, Result: text, NumTurns: numTurns}
+	if subtype != SubtypeSuccess {
 		r.IsError = true
+	}
+	switch subtype {
+	case SubtypeMaxTurns:
+		r.Errors = []string{"Reached maximum number of turns"}
+		r.TerminalReason = "max_turns"
+	default:
+		r.TerminalReason = "completed"
 	}
 	if usage != nil {
 		r.InputTokens, r.OutputTokens = usage.InputTokens, usage.OutputTokens

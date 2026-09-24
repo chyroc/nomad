@@ -92,7 +92,9 @@ type App struct {
 	foldOrder  []int
 	foldSeen   map[int]bool
 	nextFoldID int
-	mouseOn    bool
+
+	toolArgsByID map[string]string
+	mouseOn      bool
 }
 
 // withModal buffers event rendering while an inline modal (permission

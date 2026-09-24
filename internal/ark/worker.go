@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chyroc/nomad/internal/hooks"
@@ -19,18 +20,15 @@ var readOnlyTools = map[string]bool{
 }
 
 // gatedTool wraps a toolset tool with a permission decision, hooks and
-// a turn cap.
+// the shared --max-turns round cap flag.
 type gatedTool struct {
 	inner            toolset.Tool
 	decide           func(name string, input json.RawMessage) (bool, string)
 	preHookProvider  func() func(context.Context, string, json.RawMessage) hooks.Outcome
 	postHookProvider func() func(context.Context, string, json.RawMessage, bool) hooks.Outcome
 	collect          func(hooks.Outcome)
-	counter          *turnCounter
-	max              int
+	capped           *atomic.Bool
 }
-
-type turnCounter struct{ n int }
 
 // ruleSet is a mutex-guarded mutable collection of settings rules so
 // newly granted "always allow" rules take effect on the live runner.
@@ -56,11 +54,8 @@ func (s *ruleSet) AddAllowRule(rule settings.Rule) {
 func (g *gatedTool) Name() string { return g.inner.Name() }
 
 func (g *gatedTool) Execute(ctx context.Context, input json.RawMessage) toolset.Result {
-	if g.max > 0 {
-		g.counter.n++
-		if g.counter.n > g.max {
-			return toolset.ErrorResult("reached --max-turns tool-call limit")
-		}
+	if g.capped != nil && g.capped.Load() {
+		return toolset.ErrorResult("reached --max-turns turn limit")
 	}
 	allow, reason := g.decide(g.inner.Name(), input)
 	if !allow {
@@ -114,7 +109,10 @@ func newGatedToolSet(workspace string, toolTimeout time.Duration, g gateOptions)
 	if err != nil {
 		return nil, err
 	}
-	counter := &turnCounter{}
+	capped := g.capped
+	if capped == nil {
+		capped = &atomic.Bool{}
+	}
 	byName := map[string]toolset.Tool{}
 	for _, t := range tools {
 		byName[t.Name()] = t
@@ -126,8 +124,7 @@ func newGatedToolSet(workspace string, toolTimeout time.Duration, g gateOptions)
 			preHookProvider:  g.preHookProvider,
 			postHookProvider: g.postHookProvider,
 			collect:          g.collect,
-			counter:          counter,
-			max:              g.maxToolTurns,
+			capped:           capped,
 		})
 	}
 	return set, nil
@@ -155,7 +152,7 @@ type gateOptions struct {
 	preHookProvider  func() func(context.Context, string, json.RawMessage) hooks.Outcome
 	postHookProvider func() func(context.Context, string, json.RawMessage, bool) hooks.Outcome
 	collect          func(hooks.Outcome)
-	maxToolTurns     int
+	capped           *atomic.Bool
 }
 
 // decide builds the per-call decision closure with live rule snapshots.

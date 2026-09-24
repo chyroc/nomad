@@ -81,10 +81,17 @@ func TestParseOptions_Invalid(t *testing.T) {
 		{"--permission-mode", "weird"},
 		{"--resume", "x", "-c"},
 		{"--unknown-flag", "v"},
+		{"-p", "hi", "--output-format", "stream-json"},
 	} {
 		if _, err := ParseOptions(argv); err == nil {
 			t.Fatalf("expected error for %v", argv)
 		}
+	}
+}
+
+func TestParseOptions_StreamJSONVerbose(t *testing.T) {
+	if _, err := ParseOptions([]string{"-p", "hi", "--output-format", "stream-json", "--verbose"}); err != nil {
+		t.Fatalf("stream-json with --verbose must parse: %v", err)
 	}
 }
 
