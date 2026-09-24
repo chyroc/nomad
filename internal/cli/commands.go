@@ -470,13 +470,15 @@ func commandHelp() string {
 		"  /session              show current session info",
 		"  /skills [name]        list or show skills",
 		"  /memory [add text]    show or add global memory",
-		"  /permissions          show the active permission mode",
+		"  /permissions          switch permission mode",
 		"  /config [key=value]   show or set configuration",
 		"  /init                 create a project NOMAD.md",
 		"  /login  /logout       sign in or out",
 		"  /exit                 quit (also Ctrl+D)",
 		"",
-		"End a line with '\\' for multi-line input. Ctrl+C interrupts a turn.",
+		"Type '!<command>' to run a shell command directly.",
+		"End a line with '\\' for multi-line input.",
+		"Ctrl+C interrupts a turn (twice to quit); Ctrl+R searches history; Ctrl+O expands a fold.",
 	}, "\n")
 }
 
