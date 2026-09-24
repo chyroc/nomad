@@ -75,10 +75,10 @@ var effortBaseTable = []effortBaseConfig{
 		offLevel:       "minimal",
 		thinkingSwitch: true,
 		aliases: map[string]string{
-			"none":    "minimal",
-			"low":     "high",
-			"medium":  "high",
-			"xhigh":   "max",
+			"none":   "minimal",
+			"low":    "high",
+			"medium": "high",
+			"xhigh":  "max",
 		},
 	},
 	{
