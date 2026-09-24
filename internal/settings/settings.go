@@ -29,6 +29,30 @@ type SourcedFile struct {
 	Source string
 }
 
+// AllowStrings returns the raw allow rules of this document.
+func (s *SourcedFile) AllowStrings() []string {
+	if s == nil {
+		return nil
+	}
+	return s.File.Permissions.Allow
+}
+
+// DenyStrings returns the raw deny rules of this document.
+func (s *SourcedFile) DenyStrings() []string {
+	if s == nil {
+		return nil
+	}
+	return s.File.Permissions.Deny
+}
+
+// Mode returns the default permission mode of this document.
+func (s *SourcedFile) Mode() string {
+	if s == nil {
+		return ""
+	}
+	return s.File.Permissions.DefaultMode
+}
+
 // Settings is the merged view over user, project and compat files.
 type Settings struct {
 	User        *SourcedFile
@@ -82,21 +106,18 @@ func Load(userPath, projectPath string, compatPaths ...string) (*Settings, error
 			}
 		}
 	}
-	if s.User != nil {
-		addRules(&s.AllowRules, s.User.File.Permissions.Allow)
-		addRules(&s.DenyRules, s.User.File.Permissions.Deny)
-	}
-	if s.Project != nil {
-		addRules(&s.AllowRules, s.Project.File.Permissions.Allow)
-		addRules(&s.DenyRules, s.Project.File.Permissions.Deny)
-		s.DefaultMode = s.Project.File.Permissions.DefaultMode
-	}
+	addRules(&s.AllowRules, s.User.AllowStrings())
+	addRules(&s.DenyRules, s.User.DenyStrings())
+	addRules(&s.AllowRules, s.Project.AllowStrings())
+	addRules(&s.DenyRules, s.Project.DenyStrings())
+	s.DefaultMode = s.Project.Mode()
 	for _, f := range s.Compat {
-		addRules(&s.AllowRules, f.File.Permissions.Allow)
-		addRules(&s.DenyRules, f.File.Permissions.Deny)
+		f := f
+		addRules(&s.AllowRules, f.AllowStrings())
+		addRules(&s.DenyRules, f.DenyStrings())
 	}
-	if s.DefaultMode == "" && s.User != nil {
-		s.DefaultMode = s.User.File.Permissions.DefaultMode
+	if s.DefaultMode == "" {
+		s.DefaultMode = s.User.Mode()
 	}
 	return s, nil
 }

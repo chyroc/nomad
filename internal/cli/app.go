@@ -41,7 +41,7 @@ type App struct {
 
 	ctrl *control.App
 
-	settings *settings.Settings
+	appSettings *settings.Settings
 
 	editor *lineEditor
 	act    *activityLine
@@ -170,7 +170,7 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.settings = loaded
+	a.appSettings = loaded
 	if a.model == "" {
 		a.model = app.Profile.Model
 	}
@@ -226,8 +226,8 @@ func (a *App) sessionSystem(ctx context.Context) string {
 
 func (a *App) permMode() ark.PermissionMode {
 	mode := a.opts.PermissionMode
-	if !a.opts.PermissionModeSet && a.settings != nil && a.settings.DefaultMode != "" {
-		mode = a.settings.DefaultMode
+	if !a.opts.PermissionModeSet && a.appSettings != nil && a.appSettings.DefaultMode != "" {
+		mode = a.appSettings.DefaultMode
 	}
 	switch mode {
 	case "acceptEdits":

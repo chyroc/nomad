@@ -112,9 +112,9 @@ func (a *App) newRunner(ctx context.Context, remoteSessionID string, ask func(st
 		MaxToolTurns:    a.opts.MaxTurns,
 		ReasoningEffort: a.opts.ReasoningEffort,
 	}
-	if a.settings != nil {
-		opts.AllowRules = a.settings.AllowRules
-		opts.DenyRules = a.settings.DenyRules
+	if a.appSettings != nil {
+		opts.AllowRules = a.appSettings.AllowRules
+		opts.DenyRules = a.appSettings.DenyRules
 	}
 	return a.ctrl.NewRunner(ctx, opts)
 }

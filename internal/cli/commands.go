@@ -123,6 +123,9 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 	case "/logout":
 		return false, a.runLogout()
 	case "/permissions":
+		if strings.TrimSpace(arg) != "" {
+			return false, a.cmdPermissionRules(arg)
+		}
 		a.cmdPermissions()
 		return false, nil
 	case "/config":
@@ -483,7 +486,7 @@ func commandHelp() string {
 		"  /session              show current session info",
 		"  /skills [name]        list or show skills",
 		"  /memory [add text]    show or add global memory",
-		"  /permissions          switch permission mode",
+		"  /permissions [list|allow|deny|remove]  permission mode and rules",
 		"  /config [key=value]   show or set configuration",
 		"  /init                 create a project NOMAD.md",
 		"  /login  /logout       sign in or out",
@@ -552,6 +555,7 @@ func (a *App) cmdPermissions() {
 		return
 	}
 	a.opts.PermissionMode = id
+	a.opts.PermissionModeSet = true
 	a.closeRunner()
 	a.printf("%spermission mode: %s%s\n", cGreen, id, cReset)
 }
