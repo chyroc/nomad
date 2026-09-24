@@ -36,22 +36,23 @@ type InstructionFile struct {
 // hierarchy from the workspace up to the filesystem root, outermost
 // directories first.
 func Load(globalDir, home, workspace string) Bundle {
+	expander := newImportExpander(home)
 	var b Bundle
-	b.GlobalFiles = loadGlobalFiles(globalDir)
-	b.ProjectFiles = loadProjectFiles(workspace)
+	b.GlobalFiles = loadGlobalFiles(globalDir, expander)
+	b.ProjectFiles = loadProjectFiles(workspace, expander)
 	return b
 }
 
-func loadGlobalFiles(globalDir string) []InstructionFile {
+func loadGlobalFiles(globalDir string, expander *importExpander) []InstructionFile {
 	candidates := []InstructionFile{
 		{Path: filepath.Join(globalDir, "NOMAD.md")},
 		{Path: filepath.Join(globalDir, "NOMAD.local.md"), Private: true},
 		{Path: filepath.Join(globalDir, "MEMORY.md")},
 	}
-	return dedupInstructionFiles(readExisting(candidates))
+	return dedupInstructionFiles(readExisting(candidates, expander))
 }
 
-func loadProjectFiles(workspace string) []InstructionFile {
+func loadProjectFiles(workspace string, expander *importExpander) []InstructionFile {
 	var dirs []string
 	for dir := filepath.Clean(workspace); ; dir = filepath.Dir(dir) {
 		dirs = append(dirs, dir)
@@ -69,28 +70,28 @@ func loadProjectFiles(workspace string) []InstructionFile {
 			{Path: filepath.Join(dir, "AGENTS.md")},
 			{Path: filepath.Join(dir, ".nomad", "NOMAD.md")},
 			{Path: filepath.Join(dir, ".claude", "CLAUDE.md")},
-		}))
+		}, expander))
 	}
 	picked = append(picked, readExisting([]InstructionFile{
 		{Path: filepath.Join(workspace, "NOMAD.local.md"), Private: true},
 		{Path: filepath.Join(workspace, "CLAUDE.local.md"), Private: true},
-	})...)
+	}, expander)...)
 	return dedupInstructionFiles(picked)
 }
 
-func firstExisting(candidates []InstructionFile) InstructionFile {
-	files := readExisting(candidates)
+func firstExisting(candidates []InstructionFile, expander *importExpander) InstructionFile {
+	files := readExisting(candidates, expander)
 	if len(files) == 0 {
 		return InstructionFile{}
 	}
 	return files[0]
 }
 
-func readExisting(candidates []InstructionFile) []InstructionFile {
+func readExisting(candidates []InstructionFile, expander *importExpander) []InstructionFile {
 	var out []InstructionFile
 	for _, c := range candidates {
 		if data, ok := readTextFile(c.Path); ok {
-			c.Content = data
+			c.Content = expander.expandFile(c.Path, data)
 			out = append(out, c)
 		}
 	}
