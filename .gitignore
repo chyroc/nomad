@@ -17,3 +17,6 @@ CLAUDE.local.md
 
 # vendored reference copies of charmbracelet repos (local only)
 charmbracelet/
+
+# local-only e2e tests
+/e2e/
