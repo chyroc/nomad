@@ -74,9 +74,6 @@ type App struct {
 	goalEvalFailures int
 	goalRetryDelay   func(attempt int) time.Duration
 
-	toolName string
-	toolArgs string
-
 	thinkingBuf   strings.Builder
 	thinkingStart time.Time
 
@@ -84,13 +81,12 @@ type App struct {
 	modalActive  bool
 	modalPending []func()
 
-	foldMu     sync.Mutex
-	folds      map[int]*foldBlock
-	foldOrder  []int
-	foldSeen   map[int]bool
-	nextFoldID int
-
-	toolArgsByID map[string]string
+	foldMu       sync.Mutex
+	folds        map[int]*foldBlock
+	foldOrder    []int
+	foldSeen     map[int]bool
+	nextFoldID   int
+	pendingTools map[string]pendingTool
 }
 
 // withModal buffers event rendering while an inline modal (permission

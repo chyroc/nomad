@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	diffPreviewChanged = 60
-	diffOldFileCap     = 256 * 1024
+	diffOldFileCap = 256 * 1024
 )
 
 type diffLine struct {
@@ -232,23 +231,12 @@ func hunkRange(start, count int) string {
 	return itoa(start) + "," + itoa(count)
 }
 
-// changedDiffLines counts added and removed lines.
-func changedDiffLines(lines []diffLine) int {
-	n := 0
-	for _, l := range lines {
-		if l.kind == '+' || l.kind == '-' {
-			n++
-		}
-	}
-	return n
-}
-
-// renderToolDiff prints a colored diff preview below an edit/write
-// invocation line, collapsing large diffs into an expandable fold.
-func (a *App) renderToolDiff(name, args string) {
-	lines, ok := toolCallDiff(name, args, a.paths.Workspace)
+// toolCallDiffLines renders the colored unified-diff lines for an
+// edit/write call so they can be included in the tool's Ctrl+O fold.
+func toolCallDiffLines(name, argsJSON, workspace string) ([]string, bool) {
+	lines, ok := toolCallDiff(name, argsJSON, workspace)
 	if !ok {
-		return
+		return nil, false
 	}
 	rendered := make([]string, len(lines))
 	for i, l := range lines {
@@ -261,32 +249,5 @@ func (a *App) renderToolDiff(name, args string) {
 			rendered[i] = cDim + l.text + cReset
 		}
 	}
-	changed := changedDiffLines(lines)
-	if changed <= diffPreviewChanged {
-		for _, l := range rendered {
-			a.printf("  %s\n", l)
-		}
-		return
-	}
-	head := 0
-	seen := 0
-	for head < len(rendered) && seen < diffPreviewChanged {
-		if lines[head].kind == '+' || lines[head].kind == '-' {
-			seen++
-		}
-		head++
-	}
-	const tailCount = 3
-	tail := tailCount
-	if head+tail > len(rendered) {
-		tail = len(rendered) - head
-	}
-	for _, l := range rendered[:head] {
-		a.printf("  %s\n", l)
-	}
-	a.registerFold(name+" diff", rendered)
-	a.printf("%s\n", foldBar(len(rendered)-head-tail))
-	for _, l := range rendered[len(rendered)-tail:] {
-		a.printf("  %s\n", l)
-	}
+	return rendered, true
 }

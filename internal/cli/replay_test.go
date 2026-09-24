@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/chyroc/nomad/internal/loop"
 )
 
@@ -23,8 +24,8 @@ func TestReplayRichRendering(t *testing.T) {
 		{Kind: loop.EvTurnEnd, Time: now.Add(2 * time.Second), Usage: &loop.Usage{InputTokens: 3, OutputTokens: 4}},
 	}
 	a.replay(evs)
-	out := buf.String()
-	for _, want := range []string{"❯ do the thing", "Thought", "bash", "⎿  ok", "done", "✻ Worked for"} {
+	out := ansi.Strip(buf.String())
+	for _, want := range []string{"❯ do the thing", "Thought", "bash(go test)", "✓", "ok", "done", "✻ Worked for"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("replay output missing %q:\n%s", want, out)
 		}
@@ -43,11 +44,11 @@ func TestReplayErrorAndFold(t *testing.T) {
 		{Kind: loop.EvToolResult, ToolName: "bash", Result: long, IsError: true},
 		{Kind: loop.EvError, Content: "boom"},
 	})
-	out := buf.String()
-	if !strings.Contains(out, "⎿") || !strings.Contains(out, "boom") {
+	out := ansi.Strip(buf.String())
+	if !strings.Contains(out, "✗") || !strings.Contains(out, "boom") {
 		t.Fatalf("error replay wrong:\n%s", out)
 	}
-	if !strings.Contains(out, "more lines") {
+	if !strings.Contains(out, "ctrl+o to expand") {
 		t.Fatalf("long result should be folded:\n%s", out)
 	}
 }

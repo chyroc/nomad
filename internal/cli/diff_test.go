@@ -68,12 +68,9 @@ func TestUnifiedDiffDeleteAll(t *testing.T) {
 
 func TestToolCallDiffEdit(t *testing.T) {
 	args := `{"file_path":"x.go","old_string":"a\nc","new_string":"a\nb\nc"}`
-	lines, ok := toolCallDiff("edit", args, t.TempDir())
+	_, ok := toolCallDiff("edit", args, t.TempDir())
 	if !ok {
 		t.Fatal("edit diff not produced")
-	}
-	if changedDiffLines(lines) != 1 {
-		t.Fatalf("want 1 changed line, got %d", changedDiffLines(lines))
 	}
 }
 
@@ -83,12 +80,9 @@ func TestToolCallDiffWriteExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := `{"file_path":"f.txt","content":"new\n"}`
-	lines, ok := toolCallDiff("write", args, dir)
+	_, ok := toolCallDiff("write", args, dir)
 	if !ok {
 		t.Fatal("write diff not produced")
-	}
-	if changedDiffLines(lines) != 2 {
-		t.Fatalf("want 2 changed lines, got %d: %+v", changedDiffLines(lines), lines)
 	}
 }
 
@@ -104,12 +98,5 @@ func TestToolCallDiffMalformedArgs(t *testing.T) {
 	}
 	if _, ok := toolCallDiff("edit", `{"file_path":""}`, t.TempDir()); ok {
 		t.Fatal("missing file_path should return ok=false")
-	}
-}
-
-func TestChangedDiffLines(t *testing.T) {
-	n := changedDiffLines([]diffLine{{'@', "h"}, {'+', "a"}, {'-', "b"}, {' ', "c"}})
-	if n != 2 {
-		t.Fatalf("changed = %d, want 2", n)
 	}
 }

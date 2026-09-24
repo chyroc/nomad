@@ -278,8 +278,8 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		a.flushThinking()
 		a.finishActivity("")
 		if ev.ToolCall != nil {
-			a.rememberToolArgs(ev.ToolCall.ID, ev.ToolCall.Arguments)
-			a.beginTool(ev.ToolCall.Name, ev.ToolCall.Arguments)
+			a.rememberToolCall(ev.ToolCall, ev.Time)
+			a.startActivity(toolRunningLabel(ev.ToolCall.Name, ev.ToolCall.Arguments))
 		}
 	case loop.EvToolResult:
 		a.finishTool(ev)
@@ -341,44 +341,51 @@ func (a *App) finishActivity(final string) {
 	}
 }
 
-// beginTool renders the "⏺ Name(args)" invocation line, a diff preview
-// for edits and a running spinner while the tool executes.
-func (a *App) beginTool(name, arguments string) {
-	a.renderToolCallLine(name, arguments)
-	a.startActivity(a.style(cPurple, "⠿") + " " + a.style(cDim, "Running "+name+"…"))
+// toolRunningLabel renders the spinner label for an in-flight tool
+// call: tool name plus a short argument preview.
+func toolRunningLabel(name, arguments string) string {
+	return "⠿ " + name + " " + toolInvocation(name, arguments, 40)
 }
 
-// renderToolCallLine prints the invocation line and diff preview without
-// starting a spinner, so it is reusable during transcript replay.
-func (a *App) renderToolCallLine(name, arguments string) {
-	a.toolName = name
-	a.toolArgs = arguments
-	display := toolInvocation(name, arguments, 90)
-	a.printf("%s%s%s\n", a.style(cPurple, "● "), a.style(cBold, name), display)
-	a.renderToolDiff(name, arguments)
+// pendingTool remembers one in-flight call so its result line can show
+// the arguments and the elapsed time.
+type pendingTool struct {
+	name  string
+	args  string
+	start time.Time
 }
 
-// rememberToolArgs caches one call's arguments so the matching result
-// event can render a per-tool summary line.
-func (a *App) rememberToolArgs(id, args string) {
+// rememberToolCall records a call for the matching result event. The
+// start time comes from the event so replayed transcripts measure the
+// original duration.
+func (a *App) rememberToolCall(call *loop.ToolCall, at time.Time) {
+	if call == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
 	a.foldMu.Lock()
 	defer a.foldMu.Unlock()
-	if a.toolArgsByID == nil {
-		a.toolArgsByID = map[string]string{}
+	if a.pendingTools == nil {
+		a.pendingTools = map[string]pendingTool{}
 	}
-	if len(a.toolArgsByID) > 64 {
-		a.toolArgsByID = map[string]string{}
+	if len(a.pendingTools) > 64 {
+		a.pendingTools = map[string]pendingTool{}
 	}
-	a.toolArgsByID[id] = args
+	a.pendingTools[call.ID] = pendingTool{name: call.Name, args: call.Arguments, start: at}
 }
 
-func (a *App) lookupToolArgs(id string) string {
+// takeToolCall removes and returns the pending call for a result event.
+func (a *App) takeToolCall(id string) pendingTool {
 	a.foldMu.Lock()
 	defer a.foldMu.Unlock()
-	return a.toolArgsByID[id]
+	call := a.pendingTools[id]
+	delete(a.pendingTools, id)
+	return call
 }
 
-// toolResultSummary builds the one-line result digest shown after ⎿.
+// toolResultSummary builds the one-line result digest for a tool step.
 func toolResultSummary(name, args, result string) string {
 	var parsed map[string]any
 	if args != "" {
@@ -435,64 +442,68 @@ func turnEndLine(end time.Time, elapsed time.Duration) string {
 	return fmt.Sprintf("%s✻ Worked for %s · done %s%s", cDim, formatThoughtDuration(elapsed), end.Format("3:04 PM"), cReset)
 }
 
+// finishTool prints one compact line per completed tool step, e.g.
+// "● bash(go test) ✓ 3s · 12 lines". The invocation, diff preview and
+// full output stay available through the Ctrl+O fold.
 func (a *App) finishTool(ev loop.Event) {
 	a.finishActivity("")
-	color := cDim
-	if ev.IsError {
-		color = cRed
+	name := ev.ToolName
+	if name == "" {
+		name = "tool"
 	}
-	id := ""
+	callID := ""
 	if ev.ToolCall != nil {
-		id = ev.ToolCall.ID
+		callID = ev.ToolCall.ID
 	}
-	summary := toolResultSummary(ev.ToolName, a.lookupToolArgs(id), ev.Result)
+	call := a.takeToolCall(callID)
+	if call.name != "" {
+		name = call.name
+	}
+	summary := toolResultSummary(name, call.args, ev.Result)
 	body := strings.TrimSpace(ev.Result)
 	if body == "" {
 		body = "(No output)"
 	}
-	lines := strings.Split(body, "\n")
+	fold := strings.Split(body, "\n")
+	if diff, ok := toolCallDiffLines(name, call.args, a.paths.Workspace); ok {
+		fold = append(fold, diff...)
+	}
 
+	line := fmt.Sprintf("● %s%s %s · %s", a.style(cBold, name),
+		toolInvocation(name, call.args, 40), toolStatusMark(ev.IsError, call.start, ev.Time), summary)
+	if !isTinyResult(fold) {
+		a.registerFold(name, fold)
+		line += a.style(cDim, " (ctrl+o to expand)")
+	}
 	if ev.IsError {
-		a.printf("%s  ⎿  %s%s\n", color, summary, cReset)
-		if len(lines) > 1 {
-			a.renderFoldable(ev.ToolName, body, color)
-		}
-		return
+		line = cRed + line + cReset
 	}
-	if isTinyResult(lines) {
-		a.printf("%s  ⎿  %s%s\n", color, summary, cReset)
-		return
-	}
-	a.registerFold(ev.ToolName, lines)
-	a.printf("%s  ⎿  %s%s\n", color, summary, a.style(cDim, " (ctrl+o to expand)"))
+	a.printf("%s\n", line)
 }
 
-// isTinyResult reports whether a result is short enough to show inline
-// without collapsing: a single trimmed line under 80 columns.
+// toolStatusMark renders the ✓/✗ marker with the elapsed time when the
+// call ran for at least a second.
+func toolStatusMark(isErr bool, start, end time.Time) string {
+	mark, color := "✓", cGreen
+	if isErr {
+		mark, color = "✗", cRed
+	}
+	out := color + mark + cReset
+	if !start.IsZero() && !end.IsZero() {
+		if d := end.Sub(start); d >= time.Second {
+			out += cDim + " " + formatThoughtDuration(d) + cReset
+		}
+	}
+	return out
+}
+
+// isTinyResult reports whether a result is short enough to skip the
+// fold entirely: a single trimmed line under 80 columns with no diff.
 func isTinyResult(lines []string) bool {
 	if len(lines) != 1 {
 		return false
 	}
 	return len([]rune(strings.TrimSpace(lines[0]))) <= 80
-}
-
-func resultNoun(n int) string {
-	if n == 1 {
-		return "line"
-	}
-	return "lines"
-}
-
-func (a *App) toolSummarySuffix(firstLine string) string {
-	firstLine = strings.TrimSpace(firstLine)
-	if firstLine == "" {
-		return ""
-	}
-	r := []rune(firstLine)
-	if len(r) > 60 {
-		firstLine = string(r[:60]) + "…"
-	}
-	return " — " + firstLine + " " + a.style(cDim, "(Ctrl+O)")
 }
 
 // renderFoldable prints an indented body, collapsing long output into a
@@ -611,16 +622,9 @@ func (a *App) replay(evs []loop.Event) {
 			thinking = append(thinking, strings.TrimSpace(ev.Content))
 		case loop.EvToolCall:
 			flush()
-			if ev.ToolCall != nil {
-				a.rememberToolArgs(ev.ToolCall.ID, ev.ToolCall.Arguments)
-				a.renderToolCallLine(ev.ToolCall.Name, ev.ToolCall.Arguments)
-			}
+			a.rememberToolCall(ev.ToolCall, ev.Time)
 		case loop.EvToolResult:
 			flush()
-			name := ev.ToolName
-			if name == "" {
-				ev.ToolName = "tool"
-			}
 			a.finishTool(ev)
 		case loop.EvTurnEnd:
 			flush()
