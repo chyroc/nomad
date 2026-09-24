@@ -190,7 +190,7 @@ func (a *App) Run(ctx context.Context) error {
 // sessionSystem builds the system prompt addendum from memory/skills,
 // the local environment snapshot and CLI flags.
 func (a *App) sessionSystem(ctx context.Context) string {
-	b := contextinfo.Load(a.paths.MemoryFile(), a.paths.Workspace)
+	b := contextinfo.Load(a.paths.DataDir, a.paths.Home, a.paths.Workspace)
 	for _, d := range a.skills {
 		b.Skills = append(b.Skills, d.Skill)
 	}

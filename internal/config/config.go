@@ -14,6 +14,7 @@ import (
 
 // Paths groups on-disk locations.
 type Paths struct {
+	Home      string
 	DataDir   string
 	Workspace string
 }
@@ -23,6 +24,7 @@ func DefaultPaths() Paths {
 	home, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 	return Paths{
+		Home:      home,
 		DataDir:   filepath.Join(home, ".nomad"),
 		Workspace: cwd,
 	}
@@ -40,8 +42,8 @@ func (p Paths) SessionsDir() string { return filepath.Join(p.DataDir, "sessions"
 // SkillsDir holds user-defined skills.
 func (p Paths) SkillsDir() string { return filepath.Join(p.DataDir, "skills") }
 
-// MemoryFile is the global user memory file.
-func (p Paths) MemoryFile() string { return filepath.Join(p.DataDir, "MEMORY.md") }
+// MemoryFile is the global user instruction file.
+func (p Paths) MemoryFile() string { return filepath.Join(p.DataDir, "NOMAD.md") }
 
 func (p Paths) ModelsCache() string { return filepath.Join(p.DataDir, "models.json") }
 

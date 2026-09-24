@@ -8,14 +8,18 @@ import (
 )
 
 func TestLoadMemory(t *testing.T) {
-	dir := t.TempDir()
-	mem := filepath.Join(dir, "MEMORY.md")
+	global := t.TempDir()
+	ws := t.TempDir()
+	mem := filepath.Join(global, "NOMAD.md")
 	os.WriteFile(mem, []byte("global note"), 0o600)
-	os.WriteFile(filepath.Join(dir, "NOMAD.md"), []byte("project note"), 0o600)
+	os.WriteFile(filepath.Join(ws, "NOMAD.md"), []byte("project note"), 0o600)
 
-	b := Load(mem, dir)
-	if b.GlobalMemory != "global note" || b.ProjectMemory != "project note" {
-		t.Fatalf("bundle wrong: %+v", b)
+	b := Load(global, t.TempDir(), ws)
+	if len(b.GlobalFiles) != 1 || b.GlobalFiles[0].Content != "global note" {
+		t.Fatalf("global files wrong: %+v", b.GlobalFiles)
+	}
+	if len(b.ProjectFiles) != 1 || b.ProjectFiles[0].Content != "project note" {
+		t.Fatalf("project files wrong: %+v", b.ProjectFiles)
 	}
 	add := b.SystemAddendum()
 	if !strings.Contains(add, "global note") || !strings.Contains(add, "project note") {
