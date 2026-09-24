@@ -72,13 +72,20 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 		}
 		return false, nil
 	case "/resume":
-		if arg == "" {
-			return false, fmt.Errorf("usage: /resume <remote-session-id>")
+		id := strings.TrimSpace(arg)
+		if id == "" {
+			picked, ok := a.pickSession(transcript)
+			if !ok {
+				return false, nil
+			}
+			id = picked
+		} else if resolved, err := transcript.Resolve(id); err == nil {
+			id = resolved
 		}
-		if err := a.attachSession(ctx, transcript, strings.TrimSpace(arg)); err != nil {
+		if err := a.attachSession(ctx, transcript, id); err != nil {
 			return false, err
 		}
-		a.printf("%sResumed session %s%s\n", cGreen, arg, cReset)
+		a.printf("%sResumed session %s%s\n", cGreen, id, cReset)
 		return false, nil
 	case "/model":
 		a.cmdModel(ctx, arg)

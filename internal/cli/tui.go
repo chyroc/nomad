@@ -314,12 +314,37 @@ func (a *App) finishActivity(final string) {
 // beginTool renders the "⏺ Name(args)" invocation line, a diff preview
 // for edits and a running spinner while the tool executes.
 func (a *App) beginTool(name, arguments string) {
+	a.renderToolCallLine(name, arguments)
+	a.startActivity(a.style(cPurple, "⠿") + " " + a.style(cDim, "Running "+name+"…"))
+}
+
+// renderToolCallLine prints the invocation line and diff preview without
+// starting a spinner, so it is reusable during transcript replay.
+func (a *App) renderToolCallLine(name, arguments string) {
 	a.toolName = name
 	a.toolArgs = arguments
 	display := toolInvocation(name, arguments, 90)
 	a.printf("%s %s%s\n", a.style(cPurple, "⏺"), a.style(cBold, name), display)
 	a.renderToolDiff(name, arguments)
-	a.startActivity(a.style(cPurple, "⠿") + " " + a.style(cDim, "Running "+name+"…"))
+}
+
+// renderThinkingFold registers and prints one reasoning block as a
+// collapsed fold.
+func (a *App) renderThinkingFold(lines []string, started time.Time) {
+	if len(lines) == 0 {
+		return
+	}
+	a.registerFold("reasoning", lines)
+	dur := ""
+	if !started.IsZero() {
+		dur = " · " + time.Since(started).Round(time.Second).String()
+	}
+	preview := strings.TrimSpace(lines[0])
+	if len([]rune(preview)) > 60 {
+		preview = string([]rune(preview)[:60]) + "…"
+	}
+	a.printf("  %s✦ thought %d lines%s  — %s  (Ctrl+O)%s\n",
+		cDim, len(lines), dur, preview, cReset)
 }
 
 func (a *App) finishTool(ev loop.Event) {
@@ -365,20 +390,9 @@ func (a *App) flushThinking() {
 		return
 	}
 	a.finishActivity("")
-	lines := strings.Split(body, "\n")
-	a.registerFold("reasoning", lines)
-	dur := ""
-	if !a.thinkingStart.IsZero() {
-		dur = " · " + time.Since(a.thinkingStart).Round(time.Second).String()
-	}
+	started := a.thinkingStart
 	a.thinkingStart = time.Time{}
-	preview := strings.TrimSpace(lines[0])
-	if len([]rune(preview)) > 60 {
-		preview = string([]rune(preview)[:60]) + "…"
-	}
-	bar := fmt.Sprintf("  %s✦ thought %d lines%s  — %s  (Ctrl+O)%s",
-		cDim, len(lines), dur, preview, cReset)
-	a.printf("%s\n", bar)
+	a.renderThinkingFold(strings.Split(body, "\n"), started)
 }
 
 func (a *App) registerFold(header string, lines []string) int {
@@ -428,21 +442,75 @@ func (a *App) expandLatestFold() {
 }
 
 func (a *App) replay(evs []loop.Event) {
+	var thinking []string
+	var turnStart time.Time
+	flush := func() {
+		if len(thinking) > 0 {
+			a.renderThinkingFold(thinking, time.Time{})
+			thinking = nil
+		}
+	}
 	for _, ev := range evs {
 		switch ev.Kind {
 		case loop.EvUserMessage:
+			flush()
+			turnStart = ev.Time
 			a.printf("%s %s\n", a.style(cBold, ">"), ev.Content)
+		case loop.EvAssistantChunk:
 		case loop.EvAssistantMessage:
+			flush()
 			if strings.TrimSpace(ev.Content) != "" {
-				a.printf("%s\n\n", ev.Content)
+				a.renderAnswer(ev.Content)
 			}
+		case loop.EvAssistantThinking:
+			thinking = append(thinking, strings.TrimSpace(ev.Content))
 		case loop.EvToolCall:
+			flush()
 			if ev.ToolCall != nil {
-				a.printf("%s %s(%s)%s\n", a.style(cCyan, "⚙"), a.style(cBold, ev.ToolCall.Name),
-					a.style(cDim, oneLine(ev.ToolCall.Arguments, 100)), cReset)
+				a.renderToolCallLine(ev.ToolCall.Name, ev.ToolCall.Arguments)
 			}
+		case loop.EvToolResult:
+			flush()
+			color := cDim
+			mark := "✓"
+			if ev.IsError {
+				color, mark = cRed, "✗"
+			}
+			name := ev.ToolName
+			if name == "" {
+				name = "tool"
+			}
+			a.printf("%s %s %s%s\n", color, mark, a.style(cBold, name), cReset)
+			body := strings.TrimSpace(ev.Result)
+			if body == "" {
+				body = "(no output)"
+			}
+			a.renderFoldable(name, body, color)
+		case loop.EvTurnEnd:
+			flush()
+			line := ""
+			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
+				line = fmt.Sprintf("%d tokens · ↑%d ↓%d",
+					ev.Usage.InputTokens+ev.Usage.OutputTokens,
+					ev.Usage.InputTokens, ev.Usage.OutputTokens)
+			}
+			if !turnStart.IsZero() && !ev.Time.IsZero() {
+				if d := ev.Time.Sub(turnStart); d > 0 {
+					if line != "" {
+						line += " · "
+					}
+					line += formatTurnDuration(d)
+				}
+			}
+			if line != "" {
+				a.printf("%s%s%s\n", cDim, line, cReset)
+			}
+		case loop.EvError:
+			flush()
+			a.printf("%s● %v%s\n", cRed, ev.Content, cReset)
 		}
 	}
+	flush()
 }
 
 // askToolPermission is the interactive permission callback (default mode).
