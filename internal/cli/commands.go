@@ -70,7 +70,7 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 			if title == "" {
 				title = "(empty)"
 			}
-			a.printf("%s %s  %s %s\n", marker, shortID(r.ID),
+			a.printf("%s %s  %s %s\n", marker, r.ID,
 				a.style(cDim, r.UpdatedAt.Format("2006-01-02 15:04")), title)
 		}
 		return false, nil
@@ -511,13 +511,6 @@ func gitBranch(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
 }
 
 func orDefault(s, def string) string {

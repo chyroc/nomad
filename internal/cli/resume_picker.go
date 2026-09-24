@@ -20,8 +20,7 @@ func (a *App) pickSession(transcript *store.SessionStore) (string, bool) {
 		items = append(items, pickItem{
 			id:    r.ID,
 			label: title,
-			tag:   shortID(r.ID),
-			desc:  r.UpdatedAt.Format("2006-01-02 15:04"),
+			desc:  r.UpdatedAt.Format("2006-01-02 15:04") + "  " + r.ID,
 		})
 	}
 	pk := newPickerFull(a.in, a.out, items, 0,

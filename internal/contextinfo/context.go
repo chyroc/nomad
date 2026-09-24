@@ -156,10 +156,13 @@ func DiscoverSkills(home, workspace, nomadSkillsDir string) []DiscoveredSkill {
 			continue
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
+			bundle := filepath.Join(dir, e.Name())
+			// Follow symlinked skill bundles: ReadDir reports a symlink
+			// as a non-directory, so stat the resolved target instead.
+			info, statErr := os.Stat(bundle)
+			if statErr != nil || !info.IsDir() {
 				continue
 			}
-			bundle := filepath.Join(dir, e.Name())
 			if _, err := os.Stat(filepath.Join(bundle, "SKILL.md")); err != nil {
 				continue
 			}
