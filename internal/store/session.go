@@ -145,6 +145,57 @@ func (s *SessionStore) Export(id string, w io.Writer) error {
 	return nil
 }
 
+// ExportMarkdown renders the transcript of a session as readable
+// Markdown: user/assistant turns, tool calls and results, usage.
+func (s *SessionStore) ExportMarkdown(id string, w io.Writer) error {
+	events, err := s.Load(id)
+	if err != nil {
+		return err
+	}
+	mw := io.Writer(w)
+	fmt.Fprintf(mw, "# Session %s\n\n", id)
+	for _, ev := range events {
+		switch ev.Kind {
+		case loop.EvUserMessage:
+			writeMarkdownSection(mw, "User", ev.Content)
+		case loop.EvAssistantMessage:
+			writeMarkdownSection(mw, "Assistant", ev.Content)
+		case loop.EvAssistantThinking:
+			fmt.Fprintf(mw, "## Thinking\n\n%s\n\n", strings.TrimSpace(ev.Content))
+		case loop.EvToolCall:
+			if ev.ToolCall != nil {
+				fmt.Fprintf(mw, "## Tool: %s\n\n", ev.ToolCall.Name)
+				if args := strings.TrimSpace(ev.ToolCall.Arguments); args != "" && args != "{}" {
+					fmt.Fprintf(mw, "```json\n%s\n```\n\n", args)
+				}
+			}
+		case loop.EvToolResult:
+			status := "ok"
+			if ev.IsError {
+				status = "error"
+			}
+			fmt.Fprintf(mw, "Result (%s):\n\n```\n%s\n```\n\n", status, strings.TrimSpace(ev.Result))
+		case loop.EvTurnEnd:
+			if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
+				fmt.Fprintf(mw, "_%d tokens (in %d, out %d)_\n\n",
+					ev.Usage.InputTokens+ev.Usage.OutputTokens,
+					ev.Usage.InputTokens, ev.Usage.OutputTokens)
+			}
+		case loop.EvError:
+			fmt.Fprintf(mw, "## Error\n\n%s\n\n", strings.TrimSpace(ev.Content))
+		}
+	}
+	return nil
+}
+
+func writeMarkdownSection(w io.Writer, title, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	fmt.Fprintf(w, "## %s\n\n%s\n\n", title, content)
+}
+
 func (s *SessionStore) safe(id string) string {
 	return filepath.Base(id) + ".jsonl"
 }

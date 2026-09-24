@@ -471,7 +471,7 @@ func (a *App) completeSlash(line string) []string {
 
 func slashCommandNames() []string {
 	return []string{
-		"/help", "/clear", "/copy", "/model", "/effort", "/status", "/diff", "/cost", "/resume", "/sessions",
+		"/help", "/clear", "/copy", "/model", "/effort", "/status", "/diff", "/export", "/cost", "/resume", "/sessions",
 		"/session", "/skills", "/memory", "/permissions", "/config", "/init",
 		"/login", "/logout", "/exit",
 	}

@@ -91,6 +91,8 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 		return false, nil
 	case "/diff":
 		return false, a.cmdDiff(ctx)
+	case "/export":
+		return false, a.cmdExport(transcript, arg)
 	case "/cost", "/usage":
 		a.cmdCost(transcript)
 		return false, nil
@@ -467,6 +469,7 @@ func commandHelp() string {
 		"  /effort [level]       list or switch thinking effort",
 		"  /status               show account/model/session/workspace status",
 		"  /diff                 show working-tree changes",
+		"  /export [file]        export transcript as markdown (.jsonl for raw)",
 		"  /cost                 show token usage for the session",
 		"  /resume <session-id>  resume a remote session",
 		"  /sessions             list local transcripts",
