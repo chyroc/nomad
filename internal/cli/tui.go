@@ -38,7 +38,7 @@ func (a *App) runTUI(ctx context.Context) error {
 		defer resetModes()
 		a.resetTerminalModes = resetModes
 	}
-	a.editor = newLineEditor(a.in, a.out, nil)
+	a.editor = newLineEditor(a.in, a.out, nil, a.paths.HistoryFile())
 	a.restoreRawTerm = func() {
 		if a.editor != nil && a.editor.rawState != nil && a.editor.fd >= 0 {
 			term.Restore(a.editor.fd, a.editor.rawState)

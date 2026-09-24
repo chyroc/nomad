@@ -18,22 +18,23 @@ var ErrInterrupt = errors.New("interrupt")
 var pasteEndMarker = []byte("\x1b[201~")
 
 type lineEditor struct {
-	in        *bufio.Reader
-	out       io.Writer
-	fd        int
-	history   []string
-	histIdx   int
-	saved     string
-	completer func(line string) []string
-	onMouse   func(button, x, y int) bool
-	rawState  *term.State
+	in          *bufio.Reader
+	out         io.Writer
+	fd          int
+	history     []string
+	historyPath string
+	histIdx     int
+	saved       string
+	completer   func(line string) []string
+	onMouse     func(button, x, y int) bool
+	rawState    *term.State
 
 	searching   bool
 	searchQuery []rune
 	searchHit   int
 }
 
-func newLineEditor(in io.Reader, out io.Writer, history []string) *lineEditor {
+func newLineEditor(in io.Reader, out io.Writer, history []string, historyPath string) *lineEditor {
 	br, _ := in.(*bufio.Reader)
 	if br == nil {
 		br = bufio.NewReader(in)
@@ -42,7 +43,17 @@ func newLineEditor(in io.Reader, out io.Writer, history []string) *lineEditor {
 	if f, ok := out.(interface{ Fd() uintptr }); ok {
 		fd = int(f.Fd())
 	}
-	return &lineEditor{in: br, out: out, fd: fd, history: history, histIdx: len(history)}
+	if len(history) == 0 && historyPath != "" {
+		history = loadHistory(historyPath)
+	}
+	return &lineEditor{
+		in:          br,
+		out:         out,
+		fd:          fd,
+		history:     history,
+		historyPath: historyPath,
+		histIdx:     len(history),
+	}
 }
 
 func (e *lineEditor) setCompleter(f func(string) []string) { e.completer = f }
@@ -222,9 +233,7 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 			clear.WriteString("\n\r\x1b[2K\x1b[1A")
 			io.WriteString(e.out, clear.String()+prompt+displayed()+"\r\n")
 			if line := strings.TrimSpace(full); line != "" {
-				if len(e.history) == 0 || e.history[len(e.history)-1] != line {
-					e.history = append(e.history, line)
-				}
+				e.history = appendHistoryEntry(e.historyPath, e.history, line)
 			}
 			e.histIdx = len(e.history)
 			return full, nil

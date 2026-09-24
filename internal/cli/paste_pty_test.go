@@ -19,7 +19,7 @@ func pasteInRawEditor(t *testing.T, writes ...[]byte) string {
 	if err := pty.Setsize(slave, &pty.Winsize{Rows: 24, Cols: 120}); err != nil {
 		t.Fatal(err)
 	}
-	ed := newLineEditor(slave, slave, nil)
+	ed := newLineEditor(slave, slave, nil, "")
 	done := make(chan string, 1)
 	go func() {
 		line, _ := ed.ReadLine("> ")

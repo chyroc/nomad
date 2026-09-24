@@ -45,6 +45,9 @@ func (p Paths) SkillsDir() string { return filepath.Join(p.DataDir, "skills") }
 // MemoryFile is the global user instruction file.
 func (p Paths) MemoryFile() string { return filepath.Join(p.DataDir, "NOMAD.md") }
 
+// HistoryFile stores persisted input history, one encoded entry per line.
+func (p Paths) HistoryFile() string { return filepath.Join(p.DataDir, "history") }
+
 func (p Paths) ModelsCache() string { return filepath.Join(p.DataDir, "models.json") }
 
 func (p Paths) Ensure() error {
