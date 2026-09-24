@@ -29,6 +29,18 @@ func (a *App) runHeadless(ctx context.Context) error {
 		return err
 	}
 	a.sessionID = runner.SessionID()
+	a.installToolHooks(runner)
+	if resumeID == "" {
+		var ok bool
+		prompt, ok = a.runSessionStartHook(ctx, a.sessionID, prompt)
+		if !ok {
+			return fmt.Errorf("SessionStart hook blocked the run")
+		}
+	}
+	prompt, allowed := a.applyPromptHooks(ctx, a.sessionID, prompt)
+	if !allowed {
+		return fmt.Errorf("UserPromptSubmit hook blocked the prompt")
+	}
 	defer runner.Close()
 
 	var renderer loop.Observer

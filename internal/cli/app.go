@@ -16,6 +16,7 @@ import (
 	"github.com/chyroc/nomad/internal/config"
 	"github.com/chyroc/nomad/internal/contextinfo"
 	"github.com/chyroc/nomad/internal/control"
+	"github.com/chyroc/nomad/internal/hooks"
 	"github.com/chyroc/nomad/internal/loop"
 	"github.com/chyroc/nomad/internal/settings"
 )
@@ -42,6 +43,8 @@ type App struct {
 	ctrl *control.App
 
 	appSettings *settings.Settings
+	hookRunner  *hooks.Executor
+	hookConfig  hooks.Config
 
 	editor *lineEditor
 	act    *activityLine
@@ -171,6 +174,8 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 	a.appSettings = loaded
+	a.hookRunner = hooks.NewExecutor(60 * time.Second)
+	a.hookConfig = loaded.HookConfig()
 	if a.model == "" {
 		a.model = app.Profile.Model
 	}

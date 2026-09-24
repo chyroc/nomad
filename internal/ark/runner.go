@@ -14,6 +14,7 @@ import (
 	"github.com/volcengine/ark-runtime-go/arkruntime/selfhosted"
 	"github.com/volcengine/ark-runtime-go/arkruntime/toolset"
 
+	"github.com/chyroc/nomad/internal/hooks"
 	"github.com/chyroc/nomad/internal/loop"
 	"github.com/chyroc/nomad/internal/settings"
 )
@@ -50,6 +51,11 @@ type Runner struct {
 	sessionID string
 	cfg       RunConfig
 
+	drainHookContext func() string
+
+	hookMu    sync.Mutex
+	toolHooks toolHookPair
+
 	obs []loop.Observer
 
 	usage loop.Usage
@@ -70,6 +76,8 @@ type RunnerOptions struct {
 	AllowRules      []settings.Rule
 	DenyRules       []settings.Rule
 	Ask             func(toolName, arguments string) string
+	PreToolUse      func(context.Context, string, json.RawMessage) hooks.Outcome
+	PostToolUse     func(context.Context, string, json.RawMessage, bool) hooks.Outcome
 	ToolTimeout     time.Duration
 	MaxToolTurns    int
 }
@@ -110,33 +118,68 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 			return answer
 		}
 	}
-	decide := func(name string, input json.RawMessage) (bool, string) {
+	sessionSnapshot := func() map[string]bool {
 		sessionMu.Lock()
-		sess := sessionAllowed
-		sessionMu.Unlock()
-		allowRules, denyRules := rulesHolder.snapshot()
-		return decidePermission(gateOptions{
-			mode:           perm,
-			allowed:        allowed,
-			disallowed:     disallowed,
-			sessionAllowed: sess,
-			allowRules:     allowRules,
-			denyRules:      denyRules,
-			ask:            ask,
-		}, name, input)
+		defer sessionMu.Unlock()
+		return sessionAllowed
 	}
-	tools, err := newGatedToolSet(o.Workspace, toolTimeout, decide, o.MaxToolTurns)
+	var hookMu sync.Mutex
+	var pendingHookContext []string
+	collectHookContext := func(out hooks.Outcome) {
+		if strings.TrimSpace(out.AdditionalContext) == "" {
+			return
+		}
+		hookMu.Lock()
+		pendingHookContext = append(pendingHookContext, strings.TrimSpace(out.AdditionalContext))
+		hookMu.Unlock()
+	}
+	drainHookContext := func() string {
+		hookMu.Lock()
+		ctx := strings.Join(pendingHookContext, "\n\n")
+		pendingHookContext = nil
+		hookMu.Unlock()
+		return strings.TrimSpace(ctx)
+	}
+	var r *Runner
+	tools, err := newGatedToolSet(o.Workspace, toolTimeout, gateOptions{
+		mode:           perm,
+		allowed:        allowed,
+		disallowed:     disallowed,
+		rulesProvider:  rulesHolder.snapshot,
+		sessionGranted: sessionSnapshot,
+		ask:            ask,
+		maxToolTurns:   o.MaxToolTurns,
+		preHookProvider: func() func(context.Context, string, json.RawMessage) hooks.Outcome {
+			if r == nil {
+				return nil
+			}
+			r.hookMu.Lock()
+			defer r.hookMu.Unlock()
+			return r.toolHooks.pre
+		},
+		postHookProvider: func() func(context.Context, string, json.RawMessage, bool) hooks.Outcome {
+			if r == nil {
+				return nil
+			}
+			r.hookMu.Lock()
+			defer r.hookMu.Unlock()
+			return r.toolHooks.post
+		},
+		collect: collectHookContext,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("ma: init toolset: %w", err)
 	}
 	api := selfhosted.NewClientAPI(o.Client.Runtime())
 
-	r := &Runner{
-		client:          o.Client,
-		api:             api,
-		tools:           tools,
-		rules:           rulesHolder,
-		reasoningEffort: o.ReasoningEffort,
+	r = &Runner{
+		client:           o.Client,
+		api:              api,
+		tools:            tools,
+		rules:            rulesHolder,
+		drainHookContext: drainHookContext,
+		toolHooks:        toolHookPair{pre: o.PreToolUse, post: o.PostToolUse},
+		reasoningEffort:  o.ReasoningEffort,
 		cfg: RunConfig{
 			Model:           o.Model,
 			SystemPrompt:    o.SystemPrompt,
@@ -224,6 +267,21 @@ func (r *Runner) SessionID() string { return r.sessionID }
 // effect for the rest of the current runner.
 func (r *Runner) AddAllowRule(rule settings.Rule) { r.rules.AddAllowRule(rule) }
 
+// SetToolHooks installs the pre/post tool hooks for this runner.
+func (r *Runner) SetToolHooks(
+	pre func(context.Context, string, json.RawMessage) hooks.Outcome,
+	post func(context.Context, string, json.RawMessage, bool) hooks.Outcome,
+) {
+	r.hookMu.Lock()
+	r.toolHooks = toolHookPair{pre: pre, post: post}
+	r.hookMu.Unlock()
+}
+
+type toolHookPair struct {
+	pre  func(context.Context, string, json.RawMessage) hooks.Outcome
+	post func(context.Context, string, json.RawMessage, bool) hooks.Outcome
+}
+
 // Subscribe implements loop.Runner.
 func (r *Runner) Subscribe(o loop.Observer) { r.obs = append(r.obs, o) }
 
@@ -254,6 +312,11 @@ func (r *Runner) Interrupt(ctx context.Context) error {
 
 // Run drives one user turn with optional image attachments.
 func (r *Runner) Run(ctx context.Context, text string, attachments []loop.Attachment) error {
+	if r.drainHookContext != nil {
+		if extra := r.drainHookContext(); extra != "" {
+			text = text + "\n\n# Hook-provided context\n" + extra
+		}
+	}
 	r.emit(loop.Event{Kind: loop.EvUserMessage, Content: text})
 	r.usage = loop.Usage{}
 

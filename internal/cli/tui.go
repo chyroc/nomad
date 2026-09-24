@@ -161,6 +161,7 @@ func (a *App) attachSession(ctx context.Context, transcript *store.SessionStore,
 	}
 	a.setRunner(runner)
 	a.sessionID = runner.SessionID()
+	a.installToolHooks(runner)
 	if evs, err := transcript.Load(remoteID); err == nil {
 		a.replay(evs)
 	}
@@ -168,13 +169,27 @@ func (a *App) attachSession(ctx context.Context, transcript *store.SessionStore,
 }
 
 func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text string, atts []loop.Attachment) error {
-	if a.runner == nil {
+	isNewRunner := a.runner == nil
+	if isNewRunner {
 		runner, err := a.newRunner(ctx, "", a.askToolPermission)
 		if err != nil {
 			return err
 		}
 		a.setRunner(runner)
 		a.sessionID = runner.SessionID()
+		a.installToolHooks(runner)
+		var started bool
+		text, started = a.runSessionStartHook(ctx, a.sessionID, text)
+		if !started {
+			a.printf("%sSessionStart hook blocked the turn.%s\n", cYellow, cReset)
+			return nil
+		}
+	}
+	var allowed bool
+	text, allowed = a.applyPromptHooks(ctx, a.sessionID, text)
+	if !allowed {
+		a.printf("%sUserPromptSubmit hook blocked the message.%s\n", cYellow, cReset)
+		return nil
 	}
 
 	a.startActivity("Working…")
@@ -268,6 +283,7 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		} else if elapsed > 0 {
 			a.printf("%s%s%s\n", cDim, formatTurnDuration(elapsed), cReset)
 		}
+		go a.runStopHooks(context.Background(), a.sessionID)
 	case loop.EvError:
 		a.finishActivity("")
 		a.flushThinking()

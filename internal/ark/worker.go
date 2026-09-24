@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chyroc/nomad/internal/hooks"
 	"github.com/chyroc/nomad/internal/settings"
 	"github.com/volcengine/ark-runtime-go/arkruntime/selfhosted"
 	"github.com/volcengine/ark-runtime-go/arkruntime/toolset"
@@ -17,12 +18,16 @@ var readOnlyTools = map[string]bool{
 	"read": true, "glob": true, "grep": true,
 }
 
-// gatedTool wraps a toolset tool with a permission decision and a turn cap.
+// gatedTool wraps a toolset tool with a permission decision, hooks and
+// a turn cap.
 type gatedTool struct {
-	inner   toolset.Tool
-	decide  func(name string, input json.RawMessage) (bool, string)
-	counter *turnCounter
-	max     int
+	inner            toolset.Tool
+	decide           func(name string, input json.RawMessage) (bool, string)
+	preHookProvider  func() func(context.Context, string, json.RawMessage) hooks.Outcome
+	postHookProvider func() func(context.Context, string, json.RawMessage, bool) hooks.Outcome
+	collect          func(hooks.Outcome)
+	counter          *turnCounter
+	max              int
 }
 
 type turnCounter struct{ n int }
@@ -61,12 +66,33 @@ func (g *gatedTool) Execute(ctx context.Context, input json.RawMessage) toolset.
 	if !allow {
 		return toolset.ErrorResult("permission denied: " + reason)
 	}
-	return g.inner.Execute(ctx, input)
+	var pre func(context.Context, string, json.RawMessage) hooks.Outcome
+	if g.preHookProvider != nil {
+		pre = g.preHookProvider()
+	}
+	if pre != nil {
+		if out := pre(ctx, g.inner.Name(), input); out.Blocked {
+			return toolset.ErrorResult("hook denied: " + out.Reason)
+		} else if g.collect != nil {
+			g.collect(out)
+		}
+	}
+	result := g.inner.Execute(ctx, input)
+	var post func(context.Context, string, json.RawMessage, bool) hooks.Outcome
+	if g.postHookProvider != nil {
+		post = g.postHookProvider()
+	}
+	if post != nil {
+		if out := post(ctx, g.inner.Name(), input, result.IsError); g.collect != nil {
+			g.collect(out)
+		}
+	}
+	return result
 }
 
 // newGatedToolSet builds the default coding toolset with every tool
 // wrapped by the permission gate and an optional turn cap.
-func newGatedToolSet(workspace string, toolTimeout time.Duration, decide func(string, json.RawMessage) (bool, string), maxToolTurns int) (*toolset.Set, error) {
+func newGatedToolSet(workspace string, toolTimeout time.Duration, g gateOptions) (*toolset.Set, error) {
 	limits := toolset.DefaultLimits()
 	resolver, err := toolset.NewResolverWithOptions(workspace, false)
 	if err != nil {
@@ -94,7 +120,15 @@ func newGatedToolSet(workspace string, toolTimeout time.Duration, decide func(st
 		byName[t.Name()] = t
 	}
 	for _, name := range []string{"bash", "read", "write", "edit", "glob", "grep"} {
-		set.Register(&gatedTool{inner: byName[name], decide: decide, counter: counter, max: maxToolTurns})
+		set.Register(&gatedTool{
+			inner:            byName[name],
+			decide:           g.decide(),
+			preHookProvider:  g.preHookProvider,
+			postHookProvider: g.postHookProvider,
+			collect:          g.collect,
+			counter:          counter,
+			max:              g.maxToolTurns,
+		})
 	}
 	return set, nil
 }
@@ -109,13 +143,42 @@ const (
 
 // gateOptions collects every input to one permission decision.
 type gateOptions struct {
-	mode           PermissionMode
-	allowed        map[string]bool
-	disallowed     map[string]bool
-	sessionAllowed map[string]bool
-	allowRules     []settings.Rule
-	denyRules      []settings.Rule
-	ask            func(string, string) string
+	mode             PermissionMode
+	allowed          map[string]bool
+	disallowed       map[string]bool
+	sessionAllowed   map[string]bool
+	allowRules       []settings.Rule
+	denyRules        []settings.Rule
+	rulesProvider    func() ([]settings.Rule, []settings.Rule)
+	sessionGranted   func() map[string]bool
+	ask              func(string, string) string
+	preHookProvider  func() func(context.Context, string, json.RawMessage) hooks.Outcome
+	postHookProvider func() func(context.Context, string, json.RawMessage, bool) hooks.Outcome
+	collect          func(hooks.Outcome)
+	maxToolTurns     int
+}
+
+// decide builds the per-call decision closure with live rule snapshots.
+func (g gateOptions) decide() func(string, json.RawMessage) (bool, string) {
+	return func(name string, input json.RawMessage) (bool, string) {
+		allowRules, denyRules := g.allowRules, g.denyRules
+		if g.rulesProvider != nil {
+			allowRules, denyRules = g.rulesProvider()
+		}
+		sessionAllowed := g.sessionAllowed
+		if g.sessionGranted != nil {
+			sessionAllowed = g.sessionGranted()
+		}
+		return decidePermission(gateOptions{
+			mode:           g.mode,
+			allowed:        g.allowed,
+			disallowed:     g.disallowed,
+			sessionAllowed: sessionAllowed,
+			allowRules:     allowRules,
+			denyRules:      denyRules,
+			ask:            g.ask,
+		}, name, input)
+	}
 }
 
 // decidePermission implements the permission policy decision:
