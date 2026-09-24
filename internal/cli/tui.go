@@ -185,6 +185,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 	turnCtx, cancel := context.WithCancel(ctx)
 	a.turnMu.Lock()
 	a.turnCancel = cancel
+	a.turnStart = time.Now()
 	a.turnMu.Unlock()
 
 	err := a.runner.Run(turnCtx, text, atts)
@@ -261,8 +262,11 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 	case loop.EvTurnEnd:
 		a.flushThinking()
 		a.finishActivity("")
+		elapsed := a.elapsedTurn()
 		if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
-			a.printf("%s%d tokens · ↑%d ↓%d%s\n", cDim, ev.Usage.InputTokens+ev.Usage.OutputTokens, ev.Usage.InputTokens, ev.Usage.OutputTokens, cReset)
+			a.printf("%s%d tokens · ↑%d ↓%d · %s%s\n", cDim, ev.Usage.InputTokens+ev.Usage.OutputTokens, ev.Usage.InputTokens, ev.Usage.OutputTokens, formatTurnDuration(elapsed), cReset)
+		} else if elapsed > 0 {
+			a.printf("%s%s%s\n", cDim, formatTurnDuration(elapsed), cReset)
 		}
 	case loop.EvError:
 		a.finishActivity("")

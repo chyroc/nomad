@@ -49,6 +49,7 @@ type App struct {
 
 	turnMu        sync.Mutex
 	turnCancel    context.CancelFunc
+	turnStart     time.Time
 	interruptMu   sync.Mutex
 	lastInterrupt time.Time
 	quit          bool
