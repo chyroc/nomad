@@ -26,6 +26,7 @@ type lineEditor struct {
 	saved     string
 	completer func(line string) []string
 	onMouse   func(button, x, y int) bool
+	rawState  *term.State
 }
 
 func newLineEditor(in io.Reader, out io.Writer, history []string) *lineEditor {
@@ -63,9 +64,11 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 		return strings.TrimRight(line, "\n"), lerr
 	}
 	restore := func() {
+		e.rawState = nil
 		term.Restore(e.fd, old)
 	}
 	defer restore()
+	e.rawState = old
 
 	_ = prompt
 	var buf []rune

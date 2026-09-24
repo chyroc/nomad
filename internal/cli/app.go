@@ -58,6 +58,9 @@ type App struct {
 	thinkingBuf   strings.Builder
 	thinkingStart time.Time
 
+	resetTerminalModes func()
+	restoreRawTerm     func()
+
 	modalMu      sync.Mutex
 	modalActive  bool
 	modalPending []func()

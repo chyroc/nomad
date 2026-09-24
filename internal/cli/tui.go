@@ -13,6 +13,7 @@ import (
 	"github.com/chyroc/nomad/internal/ark"
 	"github.com/chyroc/nomad/internal/loop"
 	"github.com/chyroc/nomad/internal/store"
+	"golang.org/x/term"
 )
 
 func isTerminal(w interface{}) bool {
@@ -30,10 +31,19 @@ func (a *App) runTUI(ctx context.Context) error {
 		return err
 	}
 	if fdOf(a.out) >= 0 {
-		io.WriteString(a.out, "\x1b[?2004h")
-		defer io.WriteString(a.out, "\x1b[?2004l")
+		// Clear any bracketed-paste state a previous (possibly crashed)
+		// process left behind, then enable it for this run.
+		io.WriteString(a.out, "\x1b[?2004l\x1b[?2004h")
+		resetModes := func() { io.WriteString(a.out, "\x1b[?2004l") }
+		defer resetModes()
+		a.resetTerminalModes = resetModes
 	}
 	a.editor = newLineEditor(a.in, a.out, nil)
+	a.restoreRawTerm = func() {
+		if a.editor != nil && a.editor.rawState != nil && a.editor.fd >= 0 {
+			term.Restore(a.editor.fd, a.editor.rawState)
+		}
+	}
 	a.editor.setCompleter(a.completeSlash)
 	a.editor.onMouse = func(button, x, y int) bool {
 		_ = x
@@ -52,6 +62,12 @@ func (a *App) runTUI(ctx context.Context) error {
 	go func() {
 		for range sigCh {
 			if a.handleInterrupt() {
+				if a.restoreRawTerm != nil {
+					a.restoreRawTerm()
+				}
+				if a.resetTerminalModes != nil {
+					a.resetTerminalModes()
+				}
 				os.Exit(130)
 			}
 		}
