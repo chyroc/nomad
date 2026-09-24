@@ -333,7 +333,13 @@ func (a *App) finishTool(ev loop.Event) {
 		body = "(no output)"
 	}
 	a.printf("%s %s %s%s\n", color, okMark, a.style(cBold, ev.ToolName), cReset)
-	head, tail, more, folded := foldLines(ev.ToolName, body)
+	a.renderFoldable(ev.ToolName, body, color)
+}
+
+// renderFoldable prints an indented body, collapsing long output into a
+// head/tail preview with an expandable fold.
+func (a *App) renderFoldable(header, body, color string) {
+	head, tail, more, folded := foldLines(header, body)
 	if !folded {
 		for _, l := range head {
 			a.printf("%s  %s%s\n", color, l, cReset)
@@ -343,7 +349,7 @@ func (a *App) finishTool(ev loop.Event) {
 	for _, l := range head {
 		a.printf("%s  %s%s\n", color, l, cReset)
 	}
-	a.registerFold(ev.ToolName, strings.Split(body, "\n"))
+	a.registerFold(header, strings.Split(body, "\n"))
 	a.printf("%s\n", foldBar(more))
 	for _, l := range tail {
 		a.printf("%s  %s%s\n", color, l, cReset)
@@ -465,7 +471,7 @@ func (a *App) completeSlash(line string) []string {
 
 func slashCommandNames() []string {
 	return []string{
-		"/help", "/clear", "/copy", "/model", "/effort", "/status", "/cost", "/resume", "/sessions",
+		"/help", "/clear", "/copy", "/model", "/effort", "/status", "/diff", "/cost", "/resume", "/sessions",
 		"/session", "/skills", "/memory", "/permissions", "/config", "/init",
 		"/login", "/logout", "/exit",
 	}
