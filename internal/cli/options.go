@@ -17,16 +17,17 @@ type Options struct {
 	Continue  bool
 	SessionID string
 
-	Model           string
-	ReasoningEffort string
-	EffortSet       bool
-	PermissionMode  string
-	AllowedTools    []string
-	DisallowedTools []string
-	SystemPrompt    string
-	AppendSystem    bool
-	AddDirs         []string
-	Images          []string
+	Model             string
+	ReasoningEffort   string
+	EffortSet         bool
+	PermissionMode    string
+	PermissionModeSet bool
+	AllowedTools      []string
+	DisallowedTools   []string
+	SystemPrompt      string
+	AppendSystem      bool
+	AddDirs           []string
+	Images            []string
 
 	SyncSkills []string
 
@@ -90,6 +91,7 @@ func ParseOptions(argv []string) (Options, error) {
 				return fmt.Errorf("invalid --permission-mode %q", value)
 			}
 			o.PermissionMode = value
+			o.PermissionModeSet = true
 		case "allowed-tools", "allowedTools":
 			o.AllowedTools = append(o.AllowedTools, splitList(value)...)
 		case "disallowed-tools", "disallowedTools":

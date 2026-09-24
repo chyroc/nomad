@@ -48,6 +48,19 @@ func (p Paths) MemoryFile() string { return filepath.Join(p.DataDir, "NOMAD.md")
 // HistoryFile stores persisted input history, one encoded entry per line.
 func (p Paths) HistoryFile() string { return filepath.Join(p.DataDir, "history") }
 
+// UserSettingsFile is the user-global settings document.
+func (p Paths) UserSettingsFile() string { return filepath.Join(p.DataDir, "settings.json") }
+
+// ProjectSettingsFile is the workspace project settings document.
+func (p Paths) ProjectSettingsFile() string {
+	return filepath.Join(p.Workspace, ".nomad", "settings.json")
+}
+
+// CompatSettingsFile is the read-only compatibility settings document.
+func (p Paths) CompatSettingsFile() string {
+	return filepath.Join(p.Workspace, ".claude", "settings.json")
+}
+
 func (p Paths) ModelsCache() string { return filepath.Join(p.DataDir, "models.json") }
 
 func (p Paths) Ensure() error {
