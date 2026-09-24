@@ -17,7 +17,7 @@ func (a *App) statusline() string {
 		parts = append(parts, a.style(cGreen, "⎇ "+br))
 	}
 	if a.sessionID != "" {
-		parts = append(parts, a.style(cDim, shortID(a.sessionID)))
+		parts = append(parts, a.style(cDim, a.sessionID))
 	}
 	if a.goal != nil && a.goal.Active() {
 		parts = append(parts, a.style(cGreen, "◉ goal "+strconv.Itoa(a.goal.Iterations)))
