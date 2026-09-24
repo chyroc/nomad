@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 )
 
 var ErrInterrupt = errors.New("interrupt")
+
+var pasteEndMarker = []byte("\x1b[201~")
 
 type lineEditor struct {
 	in        *bufio.Reader
@@ -130,18 +133,46 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 		io.WriteString(e.out, sb.String())
 	}
 
-	drainPaste := func() string {
-		var b strings.Builder
-		for {
-			n := e.in.Buffered()
-			if n == 0 {
-				break
-			}
-			buf2 := make([]byte, n)
-			nn, _ := e.in.Read(buf2)
-			b.Write(buf2[:nn])
+	// drainPaste consumes buffered paste content but never the end
+	// marker. Real terminals deliver start + content + end in one
+	// packet, so a blind drain would swallow ESC[201~ as text and leave
+	// the editor stuck in paste mode (Enter then does nothing). It
+	// returns the content and ended=true when the end marker is present.
+	drainPaste := func() (string, bool) {
+		n := e.in.Buffered()
+		if n == 0 {
+			return "", false
 		}
-		return b.String()
+		peek, _ := e.in.Peek(n)
+		end := n
+		ended := false
+		if i := bytes.Index(peek, pasteEndMarker); i >= 0 {
+			end = i
+			ended = true
+		} else {
+			for k := len(pasteEndMarker) - 1; k >= 1; k-- {
+				if bytes.HasSuffix(peek, pasteEndMarker[:k]) {
+					end = n - k
+					break
+				}
+			}
+		}
+		if end <= 0 {
+			return "", ended
+		}
+		buf2 := make([]byte, end)
+		nn, _ := io.ReadFull(e.in, buf2)
+		return string(buf2[:nn]), ended
+	}
+	consumePasteEnd := func() {
+		n := len(pasteEndMarker)
+		if e.in.Buffered() < n {
+			return
+		}
+		peek, _ := e.in.Peek(n)
+		if bytes.Equal(peek, pasteEndMarker) {
+			_, _ = e.in.Discard(n)
+		}
 	}
 	bufferedHasNewline := func() bool {
 		n := e.in.Buffered()
@@ -165,8 +196,12 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 				continue
 			}
 			if e.in.Buffered() > 0 && bufferedHasNewline() {
-				rest := drainPaste()
+				rest, ended := drainPaste()
 				pasted = append(pasted, normalizePasted(rest))
+				if ended {
+					pasting = false
+					consumePasteEnd()
+				}
 				continue
 			}
 			full := fullText()
@@ -311,8 +346,13 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 		case pasting:
 			var b strings.Builder
 			b.WriteRune(r)
-			b.WriteString(drainPaste())
+			rest, ended := drainPaste()
+			b.WriteString(rest)
 			pasted = append(pasted, normalizePasted(b.String()))
+			if ended {
+				pasting = false
+				consumePasteEnd()
+			}
 
 		case r == 9:
 			if len(pasted) == 0 {
