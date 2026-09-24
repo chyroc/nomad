@@ -228,10 +228,13 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 					full = h
 				}
 			}
+			// Erase the two editor rows (input + hints) then echo the
+			// expanded submission: paste chips are replaced in the
+			// scrollback by the original pasted text.
 			var clear strings.Builder
 			clear.WriteString("\r\x1b[2K")
 			clear.WriteString("\n\r\x1b[2K\x1b[1A")
-			io.WriteString(e.out, clear.String()+prompt+displayed()+"\r\n")
+			io.WriteString(e.out, clear.String()+prompt+full+"\r\n")
 			if line := strings.TrimSpace(full); line != "" {
 				e.history = appendHistoryEntry(e.historyPath, e.history, line)
 			}
