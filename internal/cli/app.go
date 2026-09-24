@@ -61,9 +61,10 @@ type App struct {
 	lastInterrupt time.Time
 	quit          bool
 
-	lastAnswer        string
-	skills            []contextinfo.DiscoveredSkill
-	assistantStreamed bool
+	lastAnswer          string
+	skills              []contextinfo.DiscoveredSkill
+	assistantStreamed   bool
+	answerAnchorPrinted bool
 
 	goalStore        *goal.Store
 	goal             *goal.State

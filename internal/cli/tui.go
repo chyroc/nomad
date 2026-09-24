@@ -218,6 +218,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 	a.startActivity("Working…")
 	a.lastAnswer = ""
 	a.assistantStreamed = false
+	a.answerAnchorPrinted = false
 	a.thinkingBuf.Reset()
 	a.thinkingStart = time.Time{}
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -320,6 +321,10 @@ func (a *App) renderAnswer(text string) {
 	if text == "" {
 		return
 	}
+	if !a.answerAnchorPrinted {
+		a.printf("%s●%s\n", cPurple, cReset)
+		a.answerAnchorPrinted = true
+	}
 	if a.color {
 		width, _ := cachedTermSize()
 		a.printf("%s\n", renderMarkdown(text, width, true))
@@ -396,8 +401,48 @@ func (a *App) finishTool(ev loop.Event) {
 	if body == "" {
 		body = "(no output)"
 	}
+	lines := strings.Split(body, "\n")
 	a.printf("%s %s %s%s\n", color, okMark, a.style(cBold, ev.ToolName), cReset)
+
+	// Errors and tiny single-line results stay inline; successful
+	// output (even a few lines) collapses to one expandable summary by
+	// default, matching a compact tool transcript.
+	if !ev.IsError && !isTinyResult(lines) {
+		a.registerFold(ev.ToolName, lines)
+		preview := strings.TrimSpace(lines[0])
+		a.printf("%s  %d %s%s\n", cDim, len(lines), resultNoun(len(lines)),
+			a.toolSummarySuffix(preview))
+		return
+	}
 	a.renderFoldable(ev.ToolName, body, color)
+}
+
+// isTinyResult reports whether a result is short enough to show inline
+// without collapsing: a single trimmed line under 80 columns.
+func isTinyResult(lines []string) bool {
+	if len(lines) != 1 {
+		return false
+	}
+	return len([]rune(strings.TrimSpace(lines[0]))) <= 80
+}
+
+func resultNoun(n int) string {
+	if n == 1 {
+		return "line"
+	}
+	return "lines"
+}
+
+func (a *App) toolSummarySuffix(firstLine string) string {
+	firstLine = strings.TrimSpace(firstLine)
+	if firstLine == "" {
+		return ""
+	}
+	r := []rune(firstLine)
+	if len(r) > 60 {
+		firstLine = string(r[:60]) + "…"
+	}
+	return " — " + firstLine + " " + a.style(cDim, "(Ctrl+O)")
 }
 
 // renderFoldable prints an indented body, collapsing long output into a
@@ -499,6 +544,7 @@ func (a *App) replay(evs []loop.Event) {
 		case loop.EvAssistantMessage:
 			flush()
 			if strings.TrimSpace(ev.Content) != "" {
+				a.answerAnchorPrinted = false
 				a.renderAnswer(ev.Content)
 			}
 		case loop.EvAssistantThinking:
@@ -510,21 +556,11 @@ func (a *App) replay(evs []loop.Event) {
 			}
 		case loop.EvToolResult:
 			flush()
-			color := cDim
-			mark := "✓"
-			if ev.IsError {
-				color, mark = cRed, "✗"
-			}
 			name := ev.ToolName
 			if name == "" {
-				name = "tool"
+				ev.ToolName = "tool"
 			}
-			a.printf("%s %s %s%s\n", color, mark, a.style(cBold, name), cReset)
-			body := strings.TrimSpace(ev.Result)
-			if body == "" {
-				body = "(no output)"
-			}
-			a.renderFoldable(name, body, color)
+			a.finishTool(ev)
 		case loop.EvTurnEnd:
 			flush()
 			line := ""
