@@ -205,6 +205,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 	a.answerAnchorPrinted = false
 	a.thinkingBuf.Reset()
 	a.thinkingStart = time.Time{}
+	a.setToolCount(0)
 	turnCtx, cancel := context.WithCancel(ctx)
 	a.turnMu.Lock()
 	a.turnCancel = cancel
@@ -217,7 +218,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 	a.turnMu.Lock()
 	a.turnCancel = nil
 	a.turnMu.Unlock()
-	a.finishActivity("")
+	a.endTurnPanel("")
 	if err == nil {
 		a.printf("\n")
 	}
@@ -286,11 +287,11 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 	case loop.EvTurnEnd:
 		a.flushThinking()
 		a.finishActivity("")
-		line := turnEndLine(time.Now(), a.elapsedTurn())
+		line := turnEndLine(time.Now(), a.elapsedTurn(), a.toolStepCount())
 		if ev.Usage != nil && a.opts.Verbose {
 			line += a.style(cDim, fmt.Sprintf(" · ↑%d ↓%d tokens", ev.Usage.InputTokens, ev.Usage.OutputTokens))
 		}
-		a.printf("%s\n", line)
+		a.endTurnPanel(line)
 		go a.runStopHooks(context.Background(), a.sessionID)
 	case loop.EvError:
 		a.finishActivity("")
@@ -319,26 +320,45 @@ func (a *App) renderAnswer(text string) {
 	a.printf("%s%s\n\n", anchor, text)
 }
 
-// startActivity shows the global working indicator.
+// startActivity opens the turn's live progress region.
 func (a *App) startActivity(label string) {
-	if a.act == nil {
-		a.act = newActivityLine(a.out, a.color)
+	if a.panel == nil {
+		a.panel = newTurnPanel(a.out, a.color)
 	}
-	a.act.Start(label)
+	a.panel.begin(label)
 }
 
 func (a *App) setActivity(label string) {
-	if a.act == nil {
+	if a.panel == nil {
 		a.startActivity(label)
 		return
 	}
-	a.act.SetLabel(label)
+	a.panel.setSpinner(label)
 }
 
-func (a *App) finishActivity(final string) {
-	if a.act != nil {
-		a.act.Finish(final, false)
+// finishActivity clears the spinner but keeps the progress region.
+func (a *App) finishActivity(string) {
+	if a.panel != nil {
+		a.panel.setSpinner("")
 	}
+}
+
+// endTurnPanel erases the live progress region, printing final as a
+// permanent line when non-empty. It is safe on inactive panels.
+func (a *App) endTurnPanel(final string) {
+	if a.panel != nil {
+		a.panel.finish(final)
+	}
+}
+
+// pushPanel adds one transient progress line to the live region, or
+// prints it directly when no panel exists (tests, replay).
+func (a *App) pushPanel(line string) {
+	if a.panel != nil {
+		a.panel.push(line)
+		return
+	}
+	a.printf("%s\n", line)
 }
 
 // toolRunningLabel renders the spinner label for an in-flight tool
@@ -423,8 +443,8 @@ func toolResultSummary(name, args, result string) string {
 	return first
 }
 
-// renderThinkingFold registers and prints one reasoning block as a
-// collapsed fold.
+// renderThinkingFold registers one reasoning block as a fold and adds
+// its transient summary line to the live region.
 func (a *App) renderThinkingFold(lines []string, started time.Time) {
 	if len(lines) == 0 {
 		return
@@ -434,19 +454,24 @@ func (a *App) renderThinkingFold(lines []string, started time.Time) {
 	if !started.IsZero() {
 		clause = " for " + formatThoughtDuration(time.Since(started))
 	}
-	a.printf("%sThought%s (ctrl+o to expand)%s\n", cDim, clause, cReset)
+	a.pushPanel(a.style(cDim, "Thought"+clause) + a.style(cDim, " (ctrl+o to expand)"))
 }
 
-// turnEndLine renders the post-turn summary line.
-func turnEndLine(end time.Time, elapsed time.Duration) string {
-	return fmt.Sprintf("%s✻ Worked for %s · done %s%s", cDim, formatThoughtDuration(elapsed), end.Format("3:04 PM"), cReset)
+// turnEndLine renders the post-turn summary line, including the number
+// of tool steps whose details were erased with the live region.
+func turnEndLine(end time.Time, elapsed time.Duration, tools int) string {
+	toolPart := ""
+	if tools > 0 {
+		toolPart = fmt.Sprintf(" · %d tools", tools)
+	}
+	return fmt.Sprintf("%s✻ Worked for %s%s · done %s%s",
+		cDim, formatThoughtDuration(elapsed), toolPart, end.Format("3:04 PM"), cReset)
 }
 
-// finishTool prints one compact line per completed tool step, e.g.
-// "● bash(go test) ✓ 3s · 12 lines". The invocation, diff preview and
-// full output stay available through the Ctrl+O fold.
-func (a *App) finishTool(ev loop.Event) {
-	a.finishActivity("")
+// completeToolStep resolves one tool result into its transient summary
+// line and its expandable fold, counting the step. The line is not
+// printed; callers route it to the live region or drop it.
+func (a *App) completeToolStep(ev loop.Event) string {
 	name := ev.ToolName
 	if name == "" {
 		name = "tool"
@@ -478,7 +503,34 @@ func (a *App) finishTool(ev loop.Event) {
 	if ev.IsError {
 		line = cRed + line + cReset
 	}
-	a.printf("%s\n", line)
+	a.addToolCount(1)
+	return line
+}
+
+// finishTool renders one completed tool step into the live region,
+// e.g. "● bash(go test) ✓ 3s · 12 lines"; the invocation, diff and
+// full output stay available through the Ctrl+O fold.
+func (a *App) finishTool(ev loop.Event) {
+	a.finishActivity("")
+	a.pushPanel(a.completeToolStep(ev))
+}
+
+func (a *App) setToolCount(n int) {
+	a.foldMu.Lock()
+	a.toolCount = n
+	a.foldMu.Unlock()
+}
+
+func (a *App) addToolCount(n int) {
+	a.foldMu.Lock()
+	a.toolCount += n
+	a.foldMu.Unlock()
+}
+
+func (a *App) toolStepCount() int {
+	a.foldMu.Lock()
+	defer a.foldMu.Unlock()
+	return a.toolCount
 }
 
 // toolStatusMark renders the ✓/✗ marker with the elapsed time when the
@@ -596,60 +648,54 @@ func (a *App) latestFoldLines() []string {
 	return a.foldLines(id)
 }
 
+// replay reprints a stored transcript. Ended turns keep only their
+// question, answer and summary line: tool steps and thoughts are
+// transient by design, so replaying them registers their folds for
+// Ctrl+O without printing the per-step lines.
 func (a *App) replay(evs []loop.Event) {
-	var thinking []string
 	var turnStart time.Time
-	flush := func() {
-		if len(thinking) > 0 {
-			a.renderThinkingFold(thinking, time.Time{})
-			thinking = nil
-		}
-	}
 	for _, ev := range evs {
 		switch ev.Kind {
 		case loop.EvUserMessage:
-			flush()
 			turnStart = ev.Time
+			a.setToolCount(0)
 			a.printf("%s %s\n", a.style(cBold, "❯"), ev.Content)
 		case loop.EvAssistantChunk:
 		case loop.EvAssistantMessage:
-			flush()
 			if strings.TrimSpace(ev.Content) != "" {
 				a.answerAnchorPrinted = false
 				a.renderAnswer(ev.Content)
 			}
-		case loop.EvAssistantThinking:
-			thinking = append(thinking, strings.TrimSpace(ev.Content))
 		case loop.EvToolCall:
-			flush()
 			a.rememberToolCall(ev.ToolCall, ev.Time)
 		case loop.EvToolResult:
-			flush()
-			a.finishTool(ev)
+			a.completeToolStep(ev)
 		case loop.EvTurnEnd:
-			flush()
 			if !ev.Time.IsZero() {
 				elapsed := time.Duration(0)
 				if !turnStart.IsZero() {
 					elapsed = ev.Time.Sub(turnStart)
 				}
-				line := turnEndLine(ev.Time, elapsed)
+				line := turnEndLine(ev.Time, elapsed, a.toolStepCount())
 				if ev.Usage != nil && a.opts.Verbose {
 					line += a.style(cDim, fmt.Sprintf(" · ↑%d ↓%d tokens", ev.Usage.InputTokens, ev.Usage.OutputTokens))
 				}
 				a.printf("%s\n", line)
 			}
 		case loop.EvError:
-			flush()
 			a.printf("%s● %v%s\n", cRed, ev.Content, cReset)
 		}
 	}
-	flush()
 }
 
-// askToolPermission is the interactive permission callback (default mode).
+// askToolPermission is the interactive permission callback (default
+// mode). The live region is suspended while the picker is on screen.
 func (a *App) askToolPermission(name, args string) string {
 	a.finishActivity("")
+	if a.panel != nil {
+		a.panel.suspend()
+		defer a.panel.resume()
+	}
 	return a.askPermissionChoice(name, args)
 }
 

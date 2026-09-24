@@ -47,8 +47,9 @@ type App struct {
 	hookRunner  *hooks.Executor
 	hookConfig  hooks.Config
 
-	editor *lineEditor
-	act    *activityLine
+	editor    *lineEditor
+	panel     *turnPanel
+	toolCount int
 
 	sessionID string
 	runner    loop.Runner
@@ -128,7 +129,12 @@ func New(opts Options, in io.Reader, out io.Writer) *App {
 }
 
 func (a *App) printf(format string, args ...interface{}) {
-	fmt.Fprintf(a.out, format, args...)
+	s := fmt.Sprintf(format, args...)
+	if a.panel != nil {
+		a.panel.printAbove(s)
+		return
+	}
+	fmt.Fprint(a.out, s)
 }
 
 func (a *App) style(c, s string) string {
