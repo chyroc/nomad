@@ -63,10 +63,21 @@ Ark. This file guides the coding agent working on the repository.
 - **No inline code comments.** Do not write explanatory comments inside
   functions or above statements. When touching a file, delete existing
   non-doc comments rather than adding to them.
+- **Work in a worktree by default.** Start every change in a dedicated
+  git worktree under `.claude/worktrees/` on its own branch (one worktree
+  per requirement); do not develop or commit directly on the master
+  checkout.
 - **Commit after every completed feature or fix.** Once a requirement is
-  implemented, do a local self-review (read the diff, run `gofmt`, `go vet`,
-  `go test -race ./...`); if clean, commit immediately with a Conventional
-  Commit message. Do not batch unrelated changes into one commit.
+  implemented in the worktree, do a local self-review (read the diff, run
+  `gofmt`, `go vet`, `go test -race ./...`); if clean, commit on the
+  worktree branch with a Conventional Commit message. Do not batch
+  unrelated changes into one commit.
+- **Land on master linearly.** When the work is done, re-run the review
+  and test gate, then rebase the worktree branch onto the latest master
+  and append the requirement to master as one Conventional Commit
+  (fast-forward a single-commit branch, squash otherwise). Never create a
+  merge commit on master; `git log --graph master` must stay a straight
+  line.
 
 ## Testing
 
