@@ -63,10 +63,10 @@ Ark. This file guides the coding agent working on the repository.
 - **No inline code comments.** Do not write explanatory comments inside
   functions or above statements. When touching a file, delete existing
   non-doc comments rather than adding to them.
-- **Work in a worktree by default.** Start every change in a dedicated
-  git worktree under `.claude/worktrees/` on its own branch (one worktree
-  per requirement); do not develop or commit directly on the master
-  checkout.
+- **Work in a worktree by default.** Just launch the agent with
+  `claude -w` and it provisions the dedicated worktree and its own branch
+  for the change (personalized entrypoints take the same flag, e.g.
+  `cc_ev -w`); do not develop or commit directly on the master checkout.
 - **Commit after every completed feature or fix.** Once a requirement is
   implemented in the worktree, do a local self-review (read the diff, run
   `gofmt`, `go vet`, `go test -race ./...`); if clean, commit on the
