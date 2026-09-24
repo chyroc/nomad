@@ -23,6 +23,7 @@ const (
 	cReset  = "\x1b[0m"
 	cDim    = "\x1b[2m"
 	cCyan   = "\x1b[36m"
+	cPurple = "\x1b[35m"
 	cGreen  = "\x1b[32m"
 	cYellow = "\x1b[33m"
 	cRed    = "\x1b[31m"
@@ -40,7 +41,7 @@ type App struct {
 	ctrl *control.App
 
 	editor *lineEditor
-	spin   *spinner
+	act    *activityLine
 
 	sessionID string
 	runner    loop.Runner
@@ -54,6 +55,9 @@ type App struct {
 
 	lastAnswer string
 	skills     []contextinfo.DiscoveredSkill
+
+	toolName string
+	toolArgs string
 
 	thinkingBuf   strings.Builder
 	thinkingStart time.Time

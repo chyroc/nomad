@@ -6,7 +6,6 @@ import "fmt"
 // Returns one of: allow / session / deny. It renders a few lines
 // above the input and erases them on exit (no alternate screen).
 func (a *App) askPermissionChoice(name, args string) string {
-	a.stopSpinner()
 	return a.withModal(func() string {
 		items := []pickItem{
 			{id: "allow", label: "Allow once", desc: fmt.Sprintf("run %s this time", name)},

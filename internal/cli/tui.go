@@ -82,6 +82,7 @@ func (a *App) runTUI(ctx context.Context) error {
 
 	for {
 		a.printStatusline()
+		a.printf("%s\n", a.modeLine())
 		input, err := a.readInput()
 		if errors.Is(err, errEOF) {
 			a.printf("\n")
@@ -172,7 +173,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 		a.sessionID = runner.SessionID()
 	}
 
-	a.startSpinner()
+	a.startActivity("Working…")
 	a.lastAnswer = ""
 	a.thinkingBuf.Reset()
 	a.thinkingStart = time.Time{}
@@ -187,7 +188,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 	a.turnMu.Lock()
 	a.turnCancel = nil
 	a.turnMu.Unlock()
-	a.stopSpinner()
+	a.finishActivity("")
 	if err == nil {
 		a.printf("\n")
 	}
@@ -228,13 +229,12 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		}
 		a.thinkingBuf.WriteString(strings.TrimSpace(ev.Content))
 		a.thinkingBuf.WriteByte('\n')
+		a.setActivity(a.style(cPurple, "✻") + " " + a.style(cDim, "Thinking…"))
 	case loop.EvAssistantChunk:
-		a.stopSpinner()
-		a.flushThinking()
 		a.lastAnswer += ev.Content
 	case loop.EvAssistantMessage:
-		a.stopSpinner()
 		a.flushThinking()
+		a.finishActivity("")
 		if text := strings.TrimSpace(ev.Content); text != "" {
 			if a.color {
 				width, _ := cachedTermSize()
@@ -244,28 +244,88 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 			}
 		}
 	case loop.EvToolCall:
-		a.stopSpinner()
 		a.flushThinking()
+		a.finishActivity("")
 		if ev.ToolCall != nil {
-			args := oneLine(ev.ToolCall.Arguments, 100)
-			if args == "{}" || args == "" {
-				a.printf("%s %s%s\n", a.style(cCyan, "⚙"), a.style(cBold, ev.ToolCall.Name), cReset)
-			} else {
-				a.printf("%s %s(%s)%s\n", a.style(cCyan, "⚙"), a.style(cBold, ev.ToolCall.Name), a.style(cDim, args), cReset)
-			}
+			a.beginTool(ev.ToolCall.Name, ev.ToolCall.Arguments)
 		}
 	case loop.EvToolResult:
-		a.flushThinking()
-		a.renderToolResult(ev)
+		a.finishTool(ev)
 	case loop.EvTurnEnd:
 		a.flushThinking()
+		a.finishActivity("")
 		if ev.Usage != nil && (ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0) {
-			a.printf("%s tokens %d↑ %d↓%s\n", cDim, ev.Usage.InputTokens, ev.Usage.OutputTokens, cReset)
+			a.printf("%s%d tokens · ↑%d ↓%d%s\n", cDim, ev.Usage.InputTokens+ev.Usage.OutputTokens, ev.Usage.InputTokens, ev.Usage.OutputTokens, cReset)
 		}
 	case loop.EvError:
-		a.stopSpinner()
+		a.finishActivity("")
 		a.flushThinking()
-		a.printf("%s%v%s\n", cRed, ev.Content, cReset)
+		a.printf("%s● %v%s\n", cRed, ev.Content, cReset)
+	}
+}
+
+// startActivity shows the global working indicator.
+func (a *App) startActivity(label string) {
+	if a.act == nil {
+		a.act = newActivityLine(a.out, a.color)
+	}
+	a.act.Start(label)
+}
+
+func (a *App) setActivity(label string) {
+	if a.act == nil {
+		a.startActivity(label)
+		return
+	}
+	a.act.SetLabel(label)
+}
+
+func (a *App) finishActivity(final string) {
+	if a.act != nil {
+		a.act.Finish(final, false)
+	}
+}
+
+// beginTool renders the cc-style "⏺ Name(args)" invocation line and a
+// running spinner while the tool executes.
+func (a *App) beginTool(name, arguments string) {
+	args := oneLine(arguments, 100)
+	argPart := ""
+	if args != "" && args != "{}" {
+		argPart = a.style(cDim, "("+oneLine(arguments, 80)+")")
+	}
+	a.toolName = name
+	a.toolArgs = args
+	a.printf("%s %s%s%s\n", a.style(cPurple, "⏺"), a.style(cBold, name), argPart, cReset)
+	a.startActivity(a.style(cPurple, "⠿") + " " + a.style(cDim, "Running "+name+"…"))
+}
+
+func (a *App) finishTool(ev loop.Event) {
+	a.finishActivity("")
+	okMark, color := "✓", cDim
+	if ev.IsError {
+		okMark, color = "✗", cRed
+	}
+	body := strings.TrimSpace(ev.Result)
+	if body == "" {
+		body = "(no output)"
+	}
+	a.printf("%s %s %s%s\n", color, okMark, a.style(cBold, ev.ToolName), cReset)
+	head, tail, more, folded := foldLines(ev.ToolName, body)
+	if !folded {
+		for _, l := range head {
+			a.printf("%s  %s%s\n", color, l, cReset)
+		}
+		return
+	}
+	for _, l := range head {
+		a.printf("%s  %s%s\n", color, l, cReset)
+	}
+	id := a.registerFold(ev.ToolName, strings.Split(body, "\n"))
+	a.printf("%s\n", foldBar(more))
+	_ = id
+	for _, l := range tail {
+		a.printf("%s  %s%s\n", color, l, cReset)
 	}
 }
 
@@ -276,6 +336,9 @@ func (a *App) flushThinking() {
 	a.thinkingBuf.Reset()
 	if body == "" {
 		return
+	}
+	if a.act != nil {
+		a.act.EraseLine()
 	}
 	lines := strings.Split(body, "\n")
 	a.registerFold("reasoning", lines)
@@ -291,35 +354,6 @@ func (a *App) flushThinking() {
 	bar := fmt.Sprintf("  %s✦ thought %d lines%s  — %s  (Ctrl+O)%s",
 		cDim, len(lines), dur, preview, cReset)
 	a.printf("%s\n", bar)
-}
-
-func (a *App) renderToolResult(ev loop.Event) {
-	color := cDim
-	if ev.IsError {
-		color = cRed
-	}
-	body := strings.TrimSpace(ev.Result)
-	if body == "" {
-		body = "(no output)"
-	}
-	header := ev.ToolName
-
-	head, tail, more, folded := foldLines(header, body)
-	a.printf("%s  └─ %s:%s\n", cDim, header, cReset)
-	if !folded {
-		for _, l := range head {
-			a.printf("%s    %s%s\n", color, l, cReset)
-		}
-		return
-	}
-	for _, l := range head {
-		a.printf("%s    %s%s\n", color, l, cReset)
-	}
-	a.registerFold(header, strings.Split(body, "\n"))
-	a.printf("%s\n", foldBar(more))
-	for _, l := range tail {
-		a.printf("%s    %s%s\n", color, l, cReset)
-	}
 }
 
 func (a *App) registerFold(header string, lines []string) int {
@@ -388,21 +422,8 @@ func (a *App) replay(evs []loop.Event) {
 
 // askToolPermission is the interactive permission callback (default mode).
 func (a *App) askToolPermission(name, args string) string {
-	a.stopSpinner()
+	a.finishActivity("")
 	return a.askPermissionChoice(name, oneLine(args, 100))
-}
-
-func (a *App) startSpinner() {
-	if a.spin == nil {
-		a.spin = newSpinner(a.out, "thinking…")
-	}
-	a.spin.Start(a.color)
-}
-
-func (a *App) stopSpinner() {
-	if a.spin != nil {
-		a.spin.Stop()
-	}
 }
 
 var _ = ark.PermDefault

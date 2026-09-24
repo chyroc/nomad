@@ -9,19 +9,8 @@ import (
 )
 
 func (a *App) statusline() string {
-	dir := a.paths.Workspace
-	if h := os.Getenv("HOME"); h != "" && strings.HasPrefix(dir, h) {
-		rel := strings.TrimPrefix(dir, h)
-		if rel == "" || rel == "/" {
-			dir = "~"
-		} else {
-			dir = "~/" + strings.TrimPrefix(rel, "/")
-		}
-	} else {
-		dir = filepath.Base(dir)
-	}
 	var parts []string
-	parts = append(parts, a.style(cCyan, a.model))
+	parts = append(parts, a.style(cBold, modelShort(a.model)))
 	parts = append(parts, a.style(cDim, "effort:"+a.effortLabel()))
 	if br := gitBranch(a.paths.Workspace); br != "" {
 		parts = append(parts, a.style(cGreen, "⎇ "+br))
@@ -29,9 +18,40 @@ func (a *App) statusline() string {
 	if a.sessionID != "" {
 		parts = append(parts, a.style(cDim, shortID(a.sessionID)))
 	}
-	parts = append(parts, a.style(cDim, dir))
+	parts = append(parts, a.style(cDim, a.workdirShort()))
 	sep := a.style(cDim, " · ")
 	return strings.Join(parts, sep)
+}
+
+func modelShort(id string) string {
+	name := strings.TrimPrefix(id, "doubao-")
+	return name
+}
+
+func (a *App) workdirShort() string {
+	dir := a.paths.Workspace
+	if h := os.Getenv("HOME"); h != "" && strings.HasPrefix(dir, h) {
+		rel := strings.TrimPrefix(dir, h)
+		if rel == "" || rel == "/" {
+			return "~"
+		}
+		return "~" + rel
+	}
+	return filepath.Base(dir)
+}
+
+func (a *App) modeLine() string {
+	mode := a.opts.PermissionMode
+	switch mode {
+	case "bypassPermissions":
+		return a.style(cYellow, "⏵ bypass permissions on")
+	case "acceptEdits":
+		return a.style(cYellow, "⏵ accept edits on")
+	case "plan":
+		return a.style(cYellow, "⏵ plan mode on")
+	default:
+		return a.style(cDim, "⏵ manual mode · Enter confirms prompts")
+	}
 }
 
 func (a *App) effortLabel() string {
