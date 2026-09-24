@@ -2,22 +2,27 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
 
+// ErrInterrupt reports that the user pressed Ctrl+C while editing.
 var ErrInterrupt = errors.New("interrupt")
 
-var pasteEndMarker = []byte("\x1b[201~")
-
+// lineEditor reads one logical input line from the terminal. The
+// interactive path runs a short-lived bubbletea program around the
+// bubbles textinput; the non-TTY path falls back to a plain buffered
+// read so headless invocations never hang.
 type lineEditor struct {
+	raw         io.Reader
 	in          *bufio.Reader
 	out         io.Writer
 	fd          int
@@ -26,8 +31,7 @@ type lineEditor struct {
 	histIdx     int
 	saved       string
 	completer   func(line string) []string
-	onMouse     func(button, x, y int) bool
-	rawState    *term.State
+	onFold      func() []string
 
 	searching   bool
 	searchQuery []rune
@@ -35,10 +39,6 @@ type lineEditor struct {
 }
 
 func newLineEditor(in io.Reader, out io.Writer, history []string, historyPath string) *lineEditor {
-	br, _ := in.(*bufio.Reader)
-	if br == nil {
-		br = bufio.NewReader(in)
-	}
 	fd := -1
 	if f, ok := out.(interface{ Fd() uintptr }); ok {
 		fd = int(f.Fd())
@@ -47,7 +47,7 @@ func newLineEditor(in io.Reader, out io.Writer, history []string, historyPath st
 		history = loadHistory(historyPath)
 	}
 	return &lineEditor{
-		in:          br,
+		raw:         in,
 		out:         out,
 		fd:          fd,
 		history:     history,
@@ -58,6 +58,9 @@ func newLineEditor(in io.Reader, out io.Writer, history []string, historyPath st
 
 func (e *lineEditor) setCompleter(f func(string) []string) { e.completer = f }
 
+// History returns the in-memory history entries.
+func (e *lineEditor) History() []string { return e.history }
+
 func (e *lineEditor) width() int {
 	if w, _ := cachedTermSize(); w > 0 {
 		return w
@@ -65,341 +68,269 @@ func (e *lineEditor) width() int {
 	return 80
 }
 
+// ReadLine reads one submission. Multi-line bracketed pastes are kept
+// as chips while editing and expanded into the returned text.
 func (e *lineEditor) ReadLine(prompt string) (string, error) {
-	if e.fd < 0 {
-		io.WriteString(e.out, prompt)
-		line, err := e.in.ReadString('\n')
-		return strings.TrimRight(line, "\n"), err
+	if e.fd < 0 || !term.IsTerminal(e.fd) {
+		return e.readLinePlain(prompt)
 	}
-
-	old, err := term.MakeRaw(e.fd)
-	if err != nil {
-		io.WriteString(e.out, prompt)
-		line, lerr := e.in.ReadString('\n')
-		return strings.TrimRight(line, "\n"), lerr
-	}
-	restore := func() {
-		e.rawState = nil
-		term.Restore(e.fd, old)
-	}
-	defer restore()
-	e.rawState = old
-
-	_ = prompt
-	var buf []rune
-	cursor := 0
 	e.histIdx = len(e.history)
-	var pasted []string
-	pasting := false
-
-	chip := func(text string) string {
-		lines := strings.Count(strings.TrimRight(text, "\n"), "\n") + 1
-		return fmt.Sprintf(" [Pasted text +%d lines] ", lines-1)
+	ti := textinput.New()
+	ti.Prompt = prompt
+	ti.CharLimit = 0
+	_ = ti.Cursor.SetMode(cursor.CursorStatic)
+	m := &editorModel{ed: e, prompt: prompt, ti: ti, width: e.width()}
+	m.syncWidth()
+	p := tea.NewProgram(m, tea.WithInput(e.raw), tea.WithOutput(e.out), tea.WithoutSignalHandler())
+	m.prog = p
+	stopRelay := relayResize(p)
+	_, err := p.Run()
+	stopRelay()
+	if err != nil {
+		return "", err
 	}
-	displayed := func() string {
-		d := string(buf)
-		for _, p := range pasted {
-			d += chip(p)
+	switch m.status {
+	case editorSubmitted:
+		full := m.fullText()
+		if line := strings.TrimSpace(full); line != "" {
+			e.history = appendHistoryEntry(e.historyPath, e.history, line)
 		}
-		return d
-	}
-	fullText := func() string {
-		out := string(buf)
-		for _, p := range pasted {
-			if out != "" && !strings.HasSuffix(out, "\n") {
-				out += "\n"
-			}
-			out += strings.TrimRight(p, "\n")
-		}
-		return out
-	}
-
-	redraw := func() {
-		shown := displayed()
-		promptWidth := visiblePromptWidth(prompt)
-		width := e.width()
-		usable := width - promptWidth
-		if usable < 8 {
-			usable = 8
-		}
-		cursorCol := runewidth.StringWidth(string(buf[:cursor]))
-		for _, p := range pasted {
-			cursorCol += runewidth.StringWidth(chip(p))
-		}
-		startRune := 0
-		if cursorCol > usable {
-			startRune, _ = indexAtWidth(shown, cursorCol-usable)
-		}
-		view := truncateToWidth(shown[startRune:], usable)
-		viewStart := runewidth.StringWidth(shown[:startRune])
-		cursorTerm := promptWidth + cursorCol - viewStart
-
-		hints := slashHints(e.completer, shown)
-		newCount := len(hints)
-
-		var sb strings.Builder
-		sb.WriteString("\r\x1b[2K")
-		sb.WriteString(prompt)
-		sb.WriteString(view)
-		sb.WriteString("\n\r\x1b[2K")
-		if newCount > 0 {
-			line := strings.Join(stripAnsiList(hints), "  ")
-			sb.WriteString("\x1b[2m" + truncateToWidth(line, e.width()-2) + "\x1b[0m")
-		}
-		sb.WriteString("\x1b[1A")
-		sb.WriteString("\r\x1b[" + itoa(cursorTerm+1) + "G")
-		io.WriteString(e.out, sb.String())
-	}
-
-	// drainPaste consumes buffered paste content but never the end
-	// marker. Real terminals deliver start + content + end in one
-	// packet, so a blind drain would swallow ESC[201~ as text and leave
-	// the editor stuck in paste mode (Enter then does nothing). It
-	// returns the content and ended=true when the end marker is present.
-	drainPaste := func() (string, bool) {
-		n := e.in.Buffered()
-		if n == 0 {
-			return "", false
-		}
-		peek, _ := e.in.Peek(n)
-		end := n
-		ended := false
-		if i := bytes.Index(peek, pasteEndMarker); i >= 0 {
-			end = i
-			ended = true
-		} else {
-			for k := len(pasteEndMarker) - 1; k >= 1; k-- {
-				if bytes.HasSuffix(peek, pasteEndMarker[:k]) {
-					end = n - k
-					break
-				}
-			}
-		}
-		if end <= 0 {
-			return "", ended
-		}
-		buf2 := make([]byte, end)
-		nn, _ := io.ReadFull(e.in, buf2)
-		return string(buf2[:nn]), ended
-	}
-	consumePasteEnd := func() {
-		n := len(pasteEndMarker)
-		if e.in.Buffered() < n {
-			return
-		}
-		peek, _ := e.in.Peek(n)
-		if bytes.Equal(peek, pasteEndMarker) {
-			_, _ = e.in.Discard(n)
-		}
-	}
-	bufferedHasNewline := func() bool {
-		n := e.in.Buffered()
-		if n == 0 {
-			return false
-		}
-		peek, _ := e.in.Peek(n)
-		return strings.ContainsAny(string(peek), "\r\n")
-	}
-
-	redraw()
-	for {
-		r, _, err := e.in.ReadRune()
-		if err != nil {
-			return "", err
-		}
-
-		switch {
-		case r == '\r' || r == '\n':
-			if pasting {
-				continue
-			}
-			if e.in.Buffered() > 0 && bufferedHasNewline() {
-				rest, ended := drainPaste()
-				pasted = append(pasted, normalizePasted(rest))
-				if ended {
-					pasting = false
-					consumePasteEnd()
-				}
-				continue
-			}
-			full := fullText()
-			if len(pasted) == 0 {
-				if h := slashUnique(e.completer, strings.TrimSpace(string(buf))); h != "" {
-					full = h
-				}
-			}
-			// Erase the two editor rows (input + hints) then echo the
-			// expanded submission: paste chips are replaced in the
-			// scrollback by the original pasted text.
-			var clear strings.Builder
-			clear.WriteString("\r\x1b[2K")
-			clear.WriteString("\n\r\x1b[2K\x1b[1A")
-			io.WriteString(e.out, clear.String()+prompt+full+"\r\n")
-			if line := strings.TrimSpace(full); line != "" {
-				e.history = appendHistoryEntry(e.historyPath, e.history, line)
-			}
-			e.histIdx = len(e.history)
-			return full, nil
-
-		case r == 3:
-			io.WriteString(e.out, "\r\n")
-			return "", ErrInterrupt
-
-		case r == 4:
-			if len(buf) == 0 && len(pasted) == 0 {
-				io.WriteString(e.out, "\r\n")
-				return "", io.EOF
-			}
-
-		case r == 127 || r == 8:
-			if cursor > 0 {
-				buf = append(buf[:cursor-1], buf[cursor:]...)
-				cursor--
-			} else if len(pasted) > 0 {
-				pasted = pasted[:len(pasted)-1]
-			}
-
-		case r == 1:
-			cursor = 0
-
-		case r == 5:
-			cursor = len(buf)
-
-		case r == 18:
-			// Ctrl+R: reverse history search. Matches history entries
-			// containing the current text; repeated presses walk older.
-			if nb, nc, found := e.searchHistory(buf); found {
-				buf, cursor = nb, nc
-				continue
-			}
-
-		case r == 23:
-			i := cursor
-			for i > 0 && (buf[i-1] == ' ' || buf[i-1] == '\t') {
-				i--
-			}
-			for i > 0 && buf[i-1] != ' ' && buf[i-1] != '\t' {
-				i--
-			}
-			buf = append(buf[:i], buf[cursor:]...)
-			cursor = i
-
-		case r == 11:
-			buf = buf[:cursor]
-
-		case r == 21:
-			buf, pasted, cursor = nil, nil, 0
-
-		case r == 15:
-			if e.onMouse != nil {
-				e.onMouse(-1, 0, 0)
-			}
-
-		case r == 27:
-			if e.in.Buffered() == 0 {
-				continue
-			}
-			r2, _, err2 := e.in.ReadRune()
-			if err2 != nil {
-				continue
-			}
-			if r2 == 'b' {
-				cursor = wordLeft(buf, cursor)
-				continue
-			}
-			if r2 == 'f' {
-				cursor = wordRight(buf, cursor)
-				continue
-			}
-			if r2 == '[' {
-				r3, _, _ := e.in.ReadRune()
-				if r3 == '<' {
-					if b, x, y, ok := readSGRMouse(e.in); ok && e.onMouse != nil && b == 0 {
-						e.onMouse(0, x, y)
-					}
-					continue
-				}
-				if r3 == '2' {
-					param := []rune{r3}
-					for {
-						rn, _, err := e.in.ReadRune()
-						if err != nil {
-							break
-						}
-						if rn == '~' {
-							break
-						}
-						param = append(param, rn)
-					}
-					switch string(param) {
-					case "200", "2004":
-						pasting = true
-					case "201":
-						pasting = false
-					}
-					continue
-				}
-				switch r3 {
-				case 'A':
-					if e.histIdx > 0 {
-						if e.histIdx == len(e.history) {
-							e.saved = string(buf)
-						}
-						e.histIdx--
-						buf = []rune(e.history[e.histIdx])
-						cursor = len(buf)
-					}
-				case 'B':
-					if e.histIdx < len(e.history) {
-						e.histIdx++
-						if e.histIdx == len(e.history) {
-							buf = []rune(e.saved)
-						} else {
-							buf = []rune(e.history[e.histIdx])
-						}
-						cursor = len(buf)
-					}
-				case 'C':
-					if cursor < len(buf) {
-						cursor++
-					}
-				case 'D':
-					if cursor > 0 {
-						cursor--
-					}
-				}
-			}
-
-		case pasting:
-			var b strings.Builder
-			b.WriteRune(r)
-			rest, ended := drainPaste()
-			b.WriteString(rest)
-			pasted = append(pasted, normalizePasted(b.String()))
-			if ended {
-				pasting = false
-				consumePasteEnd()
-			}
-
-		case r == 9:
-			if len(pasted) == 0 {
-				if c := slashComplete(e.completer, string(buf)); c != "" {
-					buf = []rune(c)
-					cursor = len(buf)
-				}
-			}
-
-		case r >= 32:
-			e.searching = false
-			buf = append(buf[:cursor], append([]rune{r}, buf[cursor:]...)...)
-			cursor++
-		}
-
-		redraw()
+		e.histIdx = len(e.history)
+		return full, nil
+	case editorInterrupted:
+		return "", ErrInterrupt
+	default:
+		return "", io.EOF
 	}
 }
 
-func (e *lineEditor) History() []string { return e.history }
+func (e *lineEditor) readLinePlain(prompt string) (string, error) {
+	if e.in == nil {
+		e.in = bufio.NewReader(e.raw)
+	}
+	io.WriteString(e.out, prompt)
+	line, err := e.in.ReadString('\n')
+	return strings.TrimRight(line, "\n"), err
+}
+
+type editorStatus int
+
+const (
+	editorEditing editorStatus = iota
+	editorSubmitted
+	editorInterrupted
+	editorEOF
+)
+
+// editorModel is the bubbletea model behind ReadLine's interactive
+// path. It always renders two rows (input plus slash hints) and leaves
+// a final echo of the submission in the scrollback on exit.
+type editorModel struct {
+	ed     *lineEditor
+	prompt string
+	ti     textinput.Model
+	pasted []string
+	echo   string
+	status editorStatus
+	width  int
+	prog   *tea.Program
+}
+
+func (m *editorModel) Init() tea.Cmd {
+	return m.ti.Focus()
+}
+
+func (m *editorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.syncWidth()
+		return m, nil
+	case resizeMsg:
+		if w, _ := cachedTermSize(); w > 0 {
+			m.width = w
+			m.syncWidth()
+		}
+		return m, nil
+	case tea.KeyMsg:
+		if cmd, handled := m.handleKey(msg); handled {
+			return m, cmd
+		}
+	}
+	var cmd tea.Cmd
+	m.ti, cmd = m.ti.Update(msg)
+	return m, cmd
+}
+
+func (m *editorModel) View() string {
+	if m.status == editorSubmitted {
+		return m.echo + "\n"
+	}
+	return m.inputRow() + "\n" + m.hintRow()
+}
+
+func (m *editorModel) inputRow() string {
+	row := m.ti.View()
+	for _, p := range m.pasted {
+		row += pasteChip(p)
+	}
+	return row
+}
+
+func (m *editorModel) hintRow() string {
+	hints := slashHints(m.ed.completer, m.displayed())
+	if len(hints) == 0 {
+		return ""
+	}
+	line := strings.Join(stripAnsiList(hints), "  ")
+	return cDim + truncateToWidth(line, max(m.width-2, 0)) + cReset
+}
+
+// syncWidth keeps the textinput's value budget inside the terminal
+// after subtracting the prompt, the paste chips and one cursor cell.
+func (m *editorModel) syncWidth() {
+	chipWidth := 0
+	for _, p := range m.pasted {
+		chipWidth += visiblePromptWidth(pasteChip(p))
+	}
+	usable := m.width - visiblePromptWidth(m.prompt) - chipWidth - 1
+	if usable < 8 {
+		usable = 8
+	}
+	m.ti.Width = usable
+}
+
+// handleKey implements the nomad bindings on top of textinput. It
+// returns handled=true when the key must not reach textinput.
+func (m *editorModel) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+	switch {
+	case msg.Type == tea.KeyEnter || msg.Type == tea.KeyCtrlJ:
+		full := m.fullText()
+		if len(m.pasted) == 0 {
+			if h := slashUnique(m.ed.completer, strings.TrimSpace(m.ti.Value())); h != "" {
+				full = h
+			}
+		}
+		m.echo = m.prompt + full
+		m.status = editorSubmitted
+		return tea.Quit, true
+	case msg.Type == tea.KeyCtrlC:
+		m.status = editorInterrupted
+		return tea.Quit, true
+	case msg.Type == tea.KeyCtrlD:
+		if m.ti.Value() == "" && len(m.pasted) == 0 {
+			m.status = editorEOF
+			return tea.Quit, true
+		}
+		return nil, true
+	case msg.Type == tea.KeyRunes && msg.Paste:
+		m.pasted = append(m.pasted, normalizePasted(string(msg.Runes)))
+		m.syncWidth()
+		return nil, true
+	case msg.Type == tea.KeyUp:
+		if m.ed.histIdx > 0 {
+			if m.ed.histIdx == len(m.ed.history) {
+				m.ed.saved = m.ti.Value()
+			}
+			m.ed.histIdx--
+			m.setLine(m.ed.history[m.ed.histIdx])
+		}
+		return nil, true
+	case msg.Type == tea.KeyDown:
+		if m.ed.histIdx < len(m.ed.history) {
+			m.ed.histIdx++
+			if m.ed.histIdx == len(m.ed.history) {
+				m.setLine(m.ed.saved)
+			} else {
+				m.setLine(m.ed.history[m.ed.histIdx])
+			}
+		}
+		return nil, true
+	case msg.Type == tea.KeyCtrlR:
+		if nb, _, found := m.ed.searchHistory([]rune(m.ti.Value())); found {
+			m.setLine(string(nb))
+		}
+		return nil, true
+	case msg.Type == tea.KeyTab:
+		if len(m.pasted) == 0 {
+			if c := slashComplete(m.ed.completer, m.ti.Value()); c != "" {
+				m.setLine(c)
+			}
+		}
+		return nil, true
+	case msg.Type == tea.KeyCtrlU:
+		m.ti.Reset()
+		m.pasted = nil
+		m.syncWidth()
+		return nil, true
+	case msg.Type == tea.KeyCtrlW:
+		m.deleteWordLeft()
+		return nil, true
+	case msg.Type == tea.KeyCtrlO:
+		if m.prog != nil && m.ed.onFold != nil {
+			for _, l := range m.ed.onFold() {
+				m.prog.Println(l)
+			}
+		}
+		return nil, true
+	case msg.Type == tea.KeyCtrlV:
+		return nil, true
+	case msg.Type == tea.KeyRunes && msg.Alt && len(msg.Runes) == 1 && msg.Runes[0] == 'b':
+		m.ti.SetCursor(wordLeft([]rune(m.ti.Value()), m.ti.Position()))
+		return nil, true
+	case msg.Type == tea.KeyRunes && msg.Alt && len(msg.Runes) == 1 && msg.Runes[0] == 'f':
+		m.ti.SetCursor(wordRight([]rune(m.ti.Value()), m.ti.Position()))
+		return nil, true
+	case msg.Type == tea.KeyBackspace && m.ti.Position() == 0 && len(m.pasted) > 0:
+		m.pasted = m.pasted[:len(m.pasted)-1]
+		m.syncWidth()
+		return nil, true
+	}
+	return nil, false
+}
+
+func (m *editorModel) setLine(s string) {
+	m.ti.SetValue(s)
+	m.ti.CursorEnd()
+}
+
+// deleteWordLeft removes the whitespace and the word left of the
+// cursor, matching the classic Ctrl+W behavior (no trailing space is
+// kept).
+func (m *editorModel) deleteWordLeft() {
+	runes := []rune(m.ti.Value())
+	pos := m.ti.Position()
+	i := pos
+	for i > 0 && (runes[i-1] == ' ' || runes[i-1] == '\t') {
+		i--
+	}
+	for i > 0 && runes[i-1] != ' ' && runes[i-1] != '\t' {
+		i--
+	}
+	m.ti.SetValue(string(runes[:i]) + string(runes[pos:]))
+	m.ti.SetCursor(i)
+}
+
+func (m *editorModel) displayed() string {
+	d := m.ti.Value()
+	for _, p := range m.pasted {
+		d += pasteChip(p)
+	}
+	return d
+}
+
+// fullText joins the typed text and every pasted chip into the text
+// that is actually submitted.
+func (m *editorModel) fullText() string {
+	out := m.ti.Value()
+	for _, p := range m.pasted {
+		if out != "" && !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		out += strings.TrimRight(p, "\n")
+	}
+	return out
+}
 
 // searchHistory performs a substring reverse search over history. The
 // first press uses the current input as the query and jumps to the most
@@ -431,6 +362,11 @@ func normalizePasted(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return strings.TrimRight(s, "\n")
+}
+
+func pasteChip(text string) string {
+	lines := strings.Count(strings.TrimRight(text, "\n"), "\n") + 1
+	return fmt.Sprintf(" [Pasted text +%d lines] ", lines-1)
 }
 
 func visiblePromptWidth(s string) int {
@@ -472,19 +408,6 @@ func wordRight(buf []rune, cursor int) int {
 		i++
 	}
 	return i
-}
-
-func indexAtWidth(s string, target int) (int, int) {
-	w, idx := 0, 0
-	for _, r := range s {
-		cw := runewidth.RuneWidth(r)
-		if w+cw > target {
-			return idx, w
-		}
-		w += cw
-		idx++
-	}
-	return idx, w
 }
 
 func truncateToWidth(s string, width int) string {
@@ -580,33 +503,4 @@ func slashComplete(complete func(string) []string, line string) string {
 		return prefix
 	}
 	return ""
-}
-
-func readSGRMouse(in *bufio.Reader) (button, x, y int, ok bool) {
-	var b strings.Builder
-	for {
-		r, _, err := in.ReadRune()
-		if err != nil {
-			return 0, 0, 0, false
-		}
-		if r == 'M' || r == 'm' {
-			break
-		}
-		b.WriteRune(r)
-	}
-	parts := strings.Split(b.String(), ";")
-	if len(parts) != 3 {
-		return 0, 0, 0, false
-	}
-	for i, p := range []*int{&button, &x, &y} {
-		n := 0
-		for _, ch := range parts[i] {
-			if ch < '0' || ch > '9' {
-				return 0, 0, 0, false
-			}
-			n = n*10 + int(ch-'0')
-		}
-		*p = n
-	}
-	return button, x, y, true
 }

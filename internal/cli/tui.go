@@ -14,7 +14,6 @@ import (
 	"github.com/chyroc/nomad/internal/ark"
 	"github.com/chyroc/nomad/internal/loop"
 	"github.com/chyroc/nomad/internal/store"
-	"golang.org/x/term"
 )
 
 func isTerminal(w interface{}) bool {
@@ -32,26 +31,11 @@ func (a *App) runTUI(ctx context.Context) error {
 		return err
 	}
 	if fdOf(a.out) >= 0 {
-		// Clear any bracketed-paste state a previous (possibly crashed)
-		// process left behind, then enable it for this run.
-		io.WriteString(a.out, "\x1b[?2004l\x1b[?2004h")
-		resetModes := func() { io.WriteString(a.out, "\x1b[?2004l") }
-		defer resetModes()
-		a.resetTerminalModes = resetModes
+		io.WriteString(a.out, "\x1b[?2004l")
 	}
 	a.editor = newLineEditor(a.in, a.out, nil, a.paths.HistoryFile())
-	a.restoreRawTerm = func() {
-		if a.editor != nil && a.editor.rawState != nil && a.editor.fd >= 0 {
-			term.Restore(a.editor.fd, a.editor.rawState)
-		}
-	}
 	a.editor.setCompleter(a.completeSlash)
-	a.editor.onMouse = func(button, x, y int) bool {
-		_ = x
-		_ = y
-		a.expandLatestFold()
-		return true
-	}
+	a.editor.onFold = a.latestFoldLines
 
 	a.printf("%s◆ Nomad%s · %s · model %s · %s\n",
 		a.style(cBold, ""), cReset, a.style(cGreen, "managed-agents"),
@@ -63,12 +47,7 @@ func (a *App) runTUI(ctx context.Context) error {
 	go func() {
 		for range sigCh {
 			if a.handleInterrupt() {
-				if a.restoreRawTerm != nil {
-					a.restoreRawTerm()
-				}
-				if a.resetTerminalModes != nil {
-					a.resetTerminalModes()
-				}
+				io.WriteString(a.out, "\x1b[?2004l")
 				a.printResumeHint()
 				os.Exit(130)
 			}
@@ -564,24 +543,33 @@ func (a *App) registerFold(header string, lines []string) int {
 	return id
 }
 
-func (a *App) expandFold(id int) {
+// foldLines marks a fold as seen and renders its expansion lines.
+func (a *App) foldLines(id int) []string {
 	a.foldMu.Lock()
 	b := a.folds[id]
 	a.foldSeen[id] = true
 	a.foldMu.Unlock()
 	if b == nil {
-		return
+		return nil
 	}
-	a.printf("%s  ┌─ expanded %s (%d lines)%s\n", cCyan, b.header, len(b.lines), cReset)
+	lines := []string{fmt.Sprintf("%s  ┌─ expanded %s (%d lines)%s", cCyan, b.header, len(b.lines), cReset)}
 	for _, l := range b.lines {
-		a.printf("%s  │ %s%s\n", cDim, l, cReset)
+		lines = append(lines, fmt.Sprintf("%s  │ %s%s", cDim, l, cReset))
 	}
-	a.printf("%s  └──────────────%s\n", cCyan, cReset)
+	lines = append(lines, fmt.Sprintf("%s  └──────────────%s", cCyan, cReset))
+	return lines
 }
 
-// expandLatestFold expands the earliest not-yet-expanded fold, so
-// repeated Ctrl+O walks folds top to bottom in scrollback order.
-func (a *App) expandLatestFold() {
+func (a *App) expandFold(id int) {
+	for _, l := range a.foldLines(id) {
+		a.printf("%s\n", l)
+	}
+}
+
+// latestFoldLines returns the expansion of the earliest not-yet-seen
+// fold, so repeated Ctrl+O walks folds top to bottom in scrollback
+// order.
+func (a *App) latestFoldLines() []string {
 	a.foldMu.Lock()
 	var id int
 	for _, fid := range a.foldOrder {
@@ -591,9 +579,10 @@ func (a *App) expandLatestFold() {
 		}
 	}
 	a.foldMu.Unlock()
-	if id != 0 {
-		a.expandFold(id)
+	if id == 0 {
+		return nil
 	}
+	return a.foldLines(id)
 }
 
 func (a *App) replay(evs []loop.Event) {

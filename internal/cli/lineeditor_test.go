@@ -22,15 +22,6 @@ func TestVisiblePromptWidth(t *testing.T) {
 	}
 }
 
-func TestIndexAtWidth(t *testing.T) {
-	if idx, w := indexAtWidth("你好x", 2); idx != 1 || w != 2 {
-		t.Fatalf("idx=%d w=%d, want 1,2", idx, w)
-	}
-	if idx, w := indexAtWidth("abc", 2); idx != 2 || w != 2 {
-		t.Fatalf("idx=%d w=%d", idx, w)
-	}
-}
-
 func TestSlashComplete(t *testing.T) {
 	complete := func(line string) []string {
 		cmds := []string{"/help", "/clear", "/model", "/memory", "/resume"}

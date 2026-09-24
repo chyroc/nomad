@@ -80,9 +80,6 @@ type App struct {
 	thinkingBuf   strings.Builder
 	thinkingStart time.Time
 
-	resetTerminalModes func()
-	restoreRawTerm     func()
-
 	modalMu      sync.Mutex
 	modalActive  bool
 	modalPending []func()
@@ -94,7 +91,6 @@ type App struct {
 	nextFoldID int
 
 	toolArgsByID map[string]string
-	mouseOn      bool
 }
 
 // withModal buffers event rendering while an inline modal (permission

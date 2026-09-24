@@ -70,9 +70,7 @@ func (e *emu) scan(data []byte) (rest, reply []byte) {
 func (e *emu) snapshot() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := e.rec.String()
-	e.rec.Reset()
-	return s
+	return e.rec.String()
 }
 
 const screenRows, screenCols = 26, 120
@@ -222,6 +220,9 @@ func runPickerCase(t *testing.T, anchor int) {
 	}
 	e := &emu{curRow: anchor}
 	go e.pump(master)
+	if _, err := slave.Write(bytes.Repeat([]byte("\n"), anchor-1)); err != nil {
+		t.Fatal(err)
+	}
 
 	items := reproItems()
 	pk := newPickerFull(slave, slave, items, 8,

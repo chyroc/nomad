@@ -7,6 +7,7 @@ import (
 	"sync"
 	"syscall"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/colorprofile"
 	"golang.org/x/term"
 )
@@ -79,6 +80,33 @@ func startSizeWatcher(fd int) {
 			}
 		}()
 	})
+}
+
+// resizeMsg is relayed into bubbletea programs so their models can
+// re-read the cached terminal size when the program output is not a
+// *os.File (and therefore gets no tea.WindowSizeMsg).
+type resizeMsg struct{}
+
+// relayResize forwards terminal size changes to a running program via
+// Send. The returned func stops the relay; Send after program exit is
+// a no-op.
+func relayResize(p *tea.Program) func() {
+	ch, cancel := subscribeResize()
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ch:
+				p.Send(resizeMsg{})
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		cancel()
+	}
 }
 
 // profileWriter downsamples SGR output to the terminal's color

@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,12 +8,9 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 )
-
-func isTimeoutErr(err error) bool {
-	return errors.Is(err, os.ErrDeadlineExceeded)
-}
 
 type pickItem struct {
 	id    string
@@ -25,8 +20,7 @@ type pickItem struct {
 }
 
 type picker struct {
-	in       *bufio.Reader
-	rawIn    io.Reader
+	in       io.Reader
 	out      io.Writer
 	fd       int
 	items    []pickItem
@@ -46,10 +40,6 @@ func newPicker(in io.Reader, out io.Writer, items []pickItem, initial int) *pick
 
 func newPickerFull(in io.Reader, out io.Writer, items []pickItem, initial int,
 	title, subtitle string, efforts []string, effortIdx int) *picker {
-	br, _ := in.(*bufio.Reader)
-	if br == nil {
-		br = bufio.NewReader(in)
-	}
 	fd := -1
 	if f, ok := out.(interface{ Fd() uintptr }); ok {
 		fd = int(f.Fd())
@@ -57,7 +47,7 @@ func newPickerFull(in io.Reader, out io.Writer, items []pickItem, initial int,
 	if initial < 0 || initial >= len(items) {
 		initial = 0
 	}
-	return &picker{in: br, rawIn: in, out: out, fd: fd, items: items, initial: initial,
+	return &picker{in: in, out: out, fd: fd, items: items, initial: initial,
 		title: title, subtitle: subtitle, efforts: efforts, effort0: effortIdx}
 }
 
@@ -79,52 +69,6 @@ func (p *picker) withMultiSelect(initial []string) *picker {
 	return p
 }
 
-func (p *picker) cursorRow() int {
-	io.WriteString(p.out, "\x1b[6n")
-	var buf []byte
-	gotEsc := false
-	// Bound the DSR wait: some terminals respond late or not at all,
-	// and a blocking ReadByte would hang the whole picker. Use a short
-	// read deadline on the underlying terminal and fall back to row 0
-	// (which the caller anchors to the bottom of the screen).
-	deadliner, _ := p.rawIn.(interface {
-		SetReadDeadline(time.Time) error
-	})
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for {
-		if deadliner != nil {
-			_ = deadliner.SetReadDeadline(deadline)
-		}
-		b, err := p.in.ReadByte()
-		if deadliner != nil {
-			_ = deadliner.SetReadDeadline(time.Time{})
-		}
-		if err != nil {
-			return 0
-		}
-		switch {
-		case b == 0x1b:
-			gotEsc = true
-			buf = buf[:0]
-		case gotEsc:
-			buf = append(buf, b)
-			if b == 'R' {
-				parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(string(buf), "["), "R"), ";")
-				if len(parts) == 2 {
-					if n, err := strconv.Atoi(parts[0]); err == nil {
-						return n
-					}
-				}
-				gotEsc = false
-				buf = buf[:0]
-			}
-		}
-		if time.Now().After(deadline) {
-			return 0
-		}
-	}
-}
-
 type pickResult struct {
 	id        string
 	ids       []string
@@ -144,16 +88,56 @@ func (p *picker) RunMulti() ([]string, bool) {
 	return r.ids, ok && r.confirmed
 }
 
-func (p *picker) RunFull() (pickResult, bool) {
-	if p.fd < 0 {
-		return pickResult{}, false
+// cursorRow asks the terminal for the cursor row over the DSR escape
+// sequence. The reply never contains a newline, so the caller must run
+// it with the input already in raw mode; a late or missing reply
+// yields row 0. Reads are bounded by a short deadline so terminals
+// that never answer cannot hang the picker.
+func (p *picker) cursorRow() int {
+	io.WriteString(p.out, "\x1b[6n")
+	deadliner, _ := p.in.(interface {
+		SetReadDeadline(time.Time) error
+	})
+	deadline := time.Now().Add(500 * time.Millisecond)
+	var buf []byte
+	b := make([]byte, 1)
+	for len(buf) < 32 {
+		if deadliner != nil {
+			_ = deadliner.SetReadDeadline(deadline)
+		}
+		n, err := p.in.Read(b)
+		if deadliner != nil {
+			_ = deadliner.SetReadDeadline(time.Time{})
+		}
+		if err != nil || n == 0 {
+			return 0
+		}
+		buf = append(buf, b[0])
+		if b[0] == 'R' {
+			parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(string(buf), "\x1b["), "R"), ";")
+			if len(parts) == 2 {
+				if n, err := strconv.Atoi(parts[0]); err == nil {
+					return n
+				}
+			}
+			return 0
+		}
+		if time.Now().After(deadline) {
+			return 0
+		}
 	}
-	old, err := term.MakeRaw(p.fd)
-	if err != nil {
-		return pickResult{}, false
-	}
-	defer term.Restore(p.fd, old)
+	return 0
+}
 
+// RunFull shows the inline picker and blocks until the user confirms
+// or cancels. The panel is anchored near the cursor (moved up first so
+// the bubbletea frame paints over the rows today's panel would occupy)
+// and fully erased on exit; a plain bubbletea program in inline mode
+// never enters the alternate screen.
+func (p *picker) RunFull() (pickResult, bool) {
+	if p.fd < 0 || !term.IsTerminal(p.fd) {
+		return pickResult{}, false
+	}
 	width, height := cachedTermSize()
 	if width <= 0 {
 		width = 80
@@ -161,49 +145,13 @@ func (p *picker) RunFull() (pickResult, bool) {
 	if height <= 0 {
 		height = 24
 	}
-	resizeCh, stopResize := subscribeResize()
-	defer stopResize()
-	cursor := p.cursorRow()
-	if cursor <= 0 || cursor > height {
-		cursor = height
-	}
-
-	const headerRows = 4 // divider, title, subtitle, blank
-	footRows := 1
-	if len(p.efforts) > 0 {
-		footRows++
-	}
-
-	var query []rune
-	sel := p.initial
-	effort := p.effort0
-	top := 0
-	panelTop := cursor
-
-	filtered := func(q string) []pickItem {
-		return filterPickItems(p.items, q)
-	}
-
-	draw := func() {
-		vis := filtered(string(query))
-		if sel >= len(vis) {
-			sel = 0
-			top = 0
+	cursor := p.anchorRow()
+	m := newPickerModel(p, width, height)
+	if cursor > 0 {
+		if cursor > height {
+			cursor = height
 		}
-		maxItems := height - headerRows - footRows
-		if maxItems < 1 {
-			maxItems = 1
-		}
-		total := len(vis)
-		shown := total
-		if shown > maxItems {
-			shown = maxItems
-		}
-		listRows := shown
-		if listRows == 0 {
-			listRows = 1
-		}
-		needed := headerRows + listRows + footRows
+		needed := m.panelRows()
 		anchor := cursor
 		if anchor+needed-1 > height {
 			anchor = height - needed + 1
@@ -211,207 +159,319 @@ func (p *picker) RunFull() (pickResult, bool) {
 		if anchor < 1 {
 			anchor = 1
 		}
-		clearTop := panelTop
-		if clearTop == 0 {
-			clearTop = anchor
+		if cursor > anchor {
+			fmt.Fprintf(p.out, "\x1b[%dA\r", cursor-anchor)
 		}
-		if anchor < clearTop {
-			clearTop = anchor
-		}
-		panelTop = anchor
-		top = scrollWindow(total, shown, sel, top)
+	}
+	prog := tea.NewProgram(m, tea.WithInput(p.in), tea.WithOutput(p.out), tea.WithoutSignalHandler())
+	stopRelay := relayResize(prog)
+	final, err := prog.Run()
+	stopRelay()
+	io.WriteString(p.out, "\n")
+	if err != nil {
+		return pickResult{}, false
+	}
+	res, _ := final.(*pickerModel)
+	if res == nil || !res.result.confirmed {
+		return pickResult{}, false
+	}
+	return res.result, true
+}
 
-		var sb strings.Builder
-		sb.WriteString("\x1b[?25l")
-		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[J", clearTop))
-		row := anchor
-		if p.title != "" {
-			sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m────────────────────────────────────────────────────────────────\x1b[0m", row))
-			row++
-			sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[1m  %s\x1b[0m", row, p.title))
-			row++
-			if p.subtitle != "" {
-				sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m  %s\x1b[0m", row, truncateToWidth(p.subtitle, width-4)))
-				row++
+// anchorRow returns the terminal row the cursor sits on, or 0 when the
+// DSR reply is unavailable.
+func (p *picker) anchorRow() int {
+	f, ok := p.in.(*os.File)
+	if !ok {
+		return 0
+	}
+	fd := int(f.Fd())
+	old, err := term.MakeRaw(fd)
+	if err != nil {
+		return 0
+	}
+	defer term.Restore(fd, old)
+	return p.cursorRow()
+}
+
+func newPickerModel(p *picker, width, height int) *pickerModel {
+	footRows := 1
+	if len(p.efforts) > 0 {
+		footRows++
+	}
+	m := &pickerModel{
+		items:    p.items,
+		title:    p.title,
+		subtitle: p.subtitle,
+		efforts:  p.efforts,
+		session:  p.session,
+		multi:    p.multi,
+		checked:  p.checked,
+		sel:      p.initial,
+		effort:   p.effort0,
+		width:    width,
+		height:   height,
+		footRows: footRows,
+	}
+	m.refilter()
+	return m
+}
+
+// pickerModel renders the picker panel as plain lines and keeps the
+// selection, filter query and effort index for the bubbletea loop.
+type pickerModel struct {
+	items    []pickItem
+	title    string
+	subtitle string
+	efforts  []string
+	session  bool
+	multi    bool
+	checked  map[string]bool
+
+	query  []rune
+	vis    []pickItem
+	sel    int
+	effort int
+	top    int
+	width  int
+	height int
+
+	footRows int
+	result   pickResult
+	done     bool
+}
+
+func (m *pickerModel) Init() tea.Cmd { return nil }
+
+func (m *pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+	case resizeMsg:
+		if w, h := cachedTermSize(); w > 0 && h > 0 {
+			m.width, m.height = w, h
+		}
+		return m, nil
+	case tea.KeyMsg:
+		return m, m.handleKey(msg)
+	}
+	return m, nil
+}
+
+func (m *pickerModel) View() string {
+	if m.done {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, cDim+strings.Repeat("─", 64)+cReset)
+	lines = append(lines, cBold+"  "+m.title+cReset)
+	if m.subtitle != "" {
+		lines = append(lines, cDim+"  "+truncateToWidth(m.subtitle, max(m.width-4, 0))+cReset)
+	}
+	lines = append(lines, "")
+	shown := m.shownCount()
+	if shown == 0 {
+		lines = append(lines, cDim+"    (no matches)"+cReset)
+	}
+	for i := 0; i < shown; i++ {
+		idx := m.top + i
+		if idx >= len(m.vis) {
+			break
+		}
+		lines = append(lines, m.itemRow(idx))
+	}
+	if len(m.efforts) > 0 && m.effort < len(m.efforts) {
+		lines = append(lines, cDim+"  ◉ "+m.efforts[m.effort]+" effort  ←/→ to adjust"+cReset)
+	}
+	lines = append(lines, cDim+m.footer()+cReset)
+	return strings.Join(lines, "\n")
+}
+
+func (m *pickerModel) itemRow(idx int) string {
+	it := m.vis[idx]
+	marker := "    "
+	label := it.label
+	if m.multi {
+		box := "○"
+		if m.checked[it.id] {
+			box = "◉"
+		}
+		if idx == m.sel {
+			marker = "  " + cCyan + "❯" + cReset + " " + cCyan + box + cReset + " "
+			label = cCyan + it.label + cReset
+		} else if m.checked[it.id] {
+			marker = "    " + cGreen + box + cReset + " "
+		} else {
+			marker = "    " + box + " "
+		}
+	} else if idx == m.sel {
+		marker = "  " + cCyan + "❯" + cReset + " "
+		label = cCyan + it.label + cReset
+	}
+	line := label
+	if it.tag != "" {
+		line += "  " + it.tag
+	}
+	if m.multi && it.desc != "" {
+		line += "  " + it.desc
+	}
+	return marker + truncateToWidth(line, max(m.width-6, 0))
+}
+
+func (m *pickerModel) footer() string {
+	foot := "  Enter to confirm · Esc to cancel"
+	switch {
+	case m.multi:
+		n := 0
+		for _, it := range m.vis {
+			if m.checked[it.id] {
+				n++
 			}
-			row++
 		}
-		if shown == 0 {
-			sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m    (no matches)%s\x1b[0m", row, strings.Repeat(" ", width)))
-			row++
+		foot = fmt.Sprintf("  Space to toggle · * to toggle all · Enter to confirm %d selected · Esc to cancel", n)
+	case m.session:
+		foot = "  Enter to set as default · s to use this session only · Esc to cancel"
+	}
+	return foot
+}
+
+const pickerHeaderRows = 4
+
+func (m *pickerModel) shownCount() int {
+	maxItems := m.height - pickerHeaderRows - m.footRows
+	if maxItems < 1 {
+		maxItems = 1
+	}
+	shown := len(m.vis)
+	if shown > maxItems {
+		shown = maxItems
+	}
+	return shown
+}
+
+// panelRows reports the frame height of the initial view so the
+// caller can move the cursor up before the program starts.
+func (m *pickerModel) panelRows() int {
+	shown := m.shownCount()
+	if shown == 0 {
+		shown = 1
+	}
+	return pickerHeaderRows + shown + m.footRows
+}
+
+// refilter recomputes the visible rows after a query or size change
+// and keeps the selection inside the result.
+func (m *pickerModel) refilter() {
+	m.vis = filterPickItems(m.items, string(m.query))
+	if m.sel >= len(m.vis) {
+		m.sel = 0
+		m.top = 0
+	}
+	m.syncTop()
+}
+
+func (m *pickerModel) syncTop() {
+	m.top = scrollWindow(len(m.vis), m.shownCount(), m.sel, m.top)
+}
+
+// handleKey applies one keystroke and returns tea.Quit when the
+// interaction finished.
+func (m *pickerModel) handleKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyEscape:
+		m.done = true
+		return tea.Quit
+	case tea.KeyEnter, tea.KeyCtrlJ:
+		if m.multi {
+			var ids []string
+			for _, it := range m.items {
+				if m.checked[it.id] {
+					ids = append(ids, it.id)
+				}
+			}
+			m.result = pickResult{ids: ids, confirmed: true}
+			m.done = true
+			return tea.Quit
 		}
-		for i := 0; i < shown; i++ {
-			idx := top + i
-			if idx >= len(vis) {
+		if m.sel < len(m.vis) {
+			m.result = pickResult{id: m.vis[m.sel].id, confirmed: true, effortIdx: m.effort}
+			m.done = true
+			return tea.Quit
+		}
+	case tea.KeyUp:
+		if m.sel > 0 {
+			m.sel--
+		}
+		m.syncTop()
+	case tea.KeyDown:
+		if m.sel < len(m.vis)-1 {
+			m.sel++
+		}
+		m.syncTop()
+	case tea.KeyRight:
+		if len(m.efforts) > 0 && m.effort < len(m.efforts)-1 {
+			m.effort++
+		}
+	case tea.KeyLeft:
+		if len(m.efforts) > 0 && m.effort > 0 {
+			m.effort--
+		}
+	case tea.KeyBackspace:
+		if len(m.query) > 0 {
+			m.query = m.query[:len(m.query)-1]
+			m.refilter()
+		}
+	case tea.KeySpace:
+		if m.multi {
+			if m.sel < len(m.vis) {
+				id := m.vis[m.sel].id
+				m.checked[id] = !m.checked[id]
+			}
+			return nil
+		}
+		m.appendQuery(' ')
+	case tea.KeyRunes:
+		if msg.Paste {
+			return nil
+		}
+		for _, r := range msg.Runes {
+			if m.done {
 				break
 			}
-			it := vis[idx]
-			marker := "    "
-			label := it.label
-			if p.multi {
-				box := "○"
-				if p.checked[it.id] {
-					box = "◉"
-				}
-				if idx == sel {
-					marker = "  \x1b[36m❯\x1b[0m \x1b[36m" + box + "\x1b[0m "
-					label = "\x1b[36m" + it.label + "\x1b[0m"
-				} else if p.checked[it.id] {
-					marker = "    \x1b[32m" + box + "\x1b[0m "
-				} else {
-					marker = "    " + box + " "
-				}
-			} else if idx == sel {
-				marker = "  \x1b[36m❯\x1b[0m "
-				label = "\x1b[36m" + it.label + "\x1b[0m"
-			}
-			line := label
-			if it.tag != "" {
-				line += "  " + it.tag
-			}
-			if p.multi && it.desc != "" {
-				line += "  " + it.desc
-			}
-			sb.WriteString(fmt.Sprintf("\x1b[%d;1H%s%s", row, marker, truncateToWidth(line, width-6)))
-			row++
+			m.appendQuery(r)
 		}
-		if len(p.efforts) > 0 && effort < len(p.efforts) {
-			sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m  ◉ %s effort  ←/→ to adjust\x1b[0m", row, p.efforts[effort]))
-			row++
-		}
-		foot := "  Enter to confirm · Esc to cancel"
-		switch {
-		case p.multi:
-			n := 0
-			for _, it := range vis {
-				if p.checked[it.id] {
-					n++
-				}
-			}
-			foot = fmt.Sprintf("  Space to toggle · * to toggle all · Enter to confirm %d selected · Esc to cancel", n)
-		case p.session:
-			foot = "  Enter to set as default · s to use this session only · Esc to cancel"
-		}
-		sb.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2m%s\x1b[0m", row, foot))
-		io.WriteString(p.out, sb.String())
 	}
+	return nil
+}
 
-	erase := func() {
-		// Clear from the panel anchor to the end of the screen, show
-		// the cursor, then park it on a fresh line below the erased
-		// region so subsequent prompts do not overwrite or sit on top
-		// of the cleared panel.
-		io.WriteString(p.out, fmt.Sprintf("\x1b[?25h\x1b[%d;1H\x1b[J\n", panelTop))
-	}
-
-	deadliner, _ := p.rawIn.(interface {
-		SetReadDeadline(time.Time) error
-	})
-	if deadliner != nil {
-		defer deadliner.SetReadDeadline(time.Time{})
-	}
-	const pollInterval = 120 * time.Millisecond
-
-	draw()
-	for {
-		if deadliner != nil {
-			_ = deadliner.SetReadDeadline(time.Now().Add(pollInterval))
+// appendQuery applies one typed rune: '*' toggles every visible row in
+// multi-select, 's' confirms with session scope when enabled, anything
+// else extends the filter query.
+func (m *pickerModel) appendQuery(r rune) {
+	if r == '*' && m.multi {
+		allChecked := len(m.vis) > 0
+		for _, it := range m.vis {
+			if !m.checked[it.id] {
+				allChecked = false
+				break
+			}
 		}
-		r, _, err := p.in.ReadRune()
-		if err != nil {
-			if deadliner != nil && isTimeoutErr(err) {
-				select {
-				case <-resizeCh:
-					if w, h := cachedTermSize(); w > 0 && h > 0 {
-						width, height = w, h
-					}
-					draw()
-				default:
-				}
-				continue
-			}
-			erase()
-			return pickResult{}, false
+		for _, it := range m.vis {
+			m.checked[it.id] = !allChecked
 		}
-		vis := filtered(string(query))
-		switch {
-		case r == 3:
-			erase()
-			return pickResult{}, false
-		case r == '\r' || r == '\n':
-			if p.multi {
-				var ids []string
-				for _, it := range p.items {
-					if p.checked[it.id] {
-						ids = append(ids, it.id)
-					}
-				}
-				erase()
-				return pickResult{ids: ids, confirmed: true}, true
-			}
-			if sel < len(vis) {
-				erase()
-				return pickResult{id: vis[sel].id, confirmed: true, effortIdx: effort}, true
-			}
-		case r == ' ' && p.multi:
-			if sel < len(vis) {
-				id := vis[sel].id
-				p.checked[id] = !p.checked[id]
-			}
-		case r == '*' && p.multi:
-			allChecked := len(vis) > 0
-			for _, it := range vis {
-				if !p.checked[it.id] {
-					allChecked = false
-					break
-				}
-			}
-			for _, it := range vis {
-				p.checked[it.id] = !allChecked
-			}
-		case r == 's' && p.session && !p.multi:
-			if sel < len(vis) {
-				erase()
-				return pickResult{id: vis[sel].id, confirmed: true, session: true, effortIdx: effort}, true
-			}
-		case r == 27:
-			if p.in.Buffered() == 0 {
-				erase()
-				return pickResult{}, false
-			}
-			r2, _, _ := p.in.ReadRune()
-			if r2 != '[' {
-				erase()
-				return pickResult{}, false
-			}
-			r3, _, _ := p.in.ReadRune()
-			switch r3 {
-			case 'A':
-				if sel > 0 {
-					sel--
-				}
-			case 'B':
-				if sel < len(vis)-1 {
-					sel++
-				}
-			case 'C':
-				if len(p.efforts) > 0 && effort < len(p.efforts)-1 {
-					effort++
-				}
-			case 'D':
-				if len(p.efforts) > 0 && effort > 0 {
-					effort--
-				}
-			}
-		case r == 127 || r == 8:
-			if len(query) > 0 {
-				query = query[:len(query)-1]
-			}
-		case r >= 32:
-			query = append(query, r)
-		}
-		draw()
+		return
 	}
+	if r == 's' && m.session && !m.multi {
+		if m.sel < len(m.vis) {
+			m.result = pickResult{id: m.vis[m.sel].id, confirmed: true, session: true, effortIdx: m.effort}
+			m.done = true
+		}
+		return
+	}
+	m.query = append(m.query, r)
+	m.refilter()
 }
 
 func scrollWindow(total, shown, sel, top int) int {

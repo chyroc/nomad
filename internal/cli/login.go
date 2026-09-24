@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -13,7 +12,7 @@ import (
 
 // chooseProject shows an up/down selector for the account's IAM
 // projects. Esc or any read failure falls back to the first project.
-func chooseProject(br *bufio.Reader, out io.Writer, projects []string) string {
+func chooseProject(in io.Reader, out io.Writer, projects []string) string {
 	if len(projects) == 0 {
 		return ""
 	}
@@ -22,7 +21,7 @@ func chooseProject(br *bufio.Reader, out io.Writer, projects []string) string {
 		items = append(items, pickItem{id: p, label: p})
 	}
 	fmt.Fprintln(out)
-	pk := newPickerFull(br, out, items, 0,
+	pk := newPickerFull(in, out, items, 0,
 		"Select project",
 		"The new API key will be scoped to this project.",
 		nil, 0)
@@ -31,6 +30,25 @@ func chooseProject(br *bufio.Reader, out io.Writer, projects []string) string {
 		return projects[0]
 	}
 	return id
+}
+
+// readLine reads one line without buffering ahead, so a later raw
+// consumer of the same reader still sees every following byte.
+func readLine(r io.Reader) (string, error) {
+	var buf []byte
+	b := make([]byte, 1)
+	for {
+		n, err := r.Read(b)
+		if n > 0 {
+			if b[0] == '\n' {
+				return strings.TrimRight(string(buf), "\r"), nil
+			}
+			buf = append(buf, b[0])
+		}
+		if err != nil {
+			return strings.TrimRight(string(buf), "\r"), err
+		}
+	}
 }
 
 func (a *App) interactiveLogin(ctx context.Context, app *control.App) error {
@@ -46,7 +64,6 @@ func (a *App) runLogin(ctx context.Context) error {
 }
 
 func (a *App) loginFlow(ctx context.Context, app *control.App, in io.Reader, out io.Writer) error {
-	br := bufio.NewReader(in)
 	fmt.Fprintln(out, "Log in to Volcengine Ark (cross-device OAuth).")
 	fmt.Fprintln(out, "Open this URL in a browser, approve, then paste the code shown on the page:")
 
@@ -54,11 +71,11 @@ func (a *App) loginFlow(ctx context.Context, app *control.App, in io.Reader, out
 		func(url string) { fmt.Fprintf(out, "\n%s%s%s\n\n", a.style(cCyan, ""), url, cReset) },
 		func() (string, error) {
 			fmt.Fprint(out, "Paste authorization code: ")
-			line, err := br.ReadString('\n')
+			line, err := readLine(in)
 			return strings.TrimSpace(line), err
 		},
 		func(projects []string) string {
-			return chooseProject(br, out, projects)
+			return chooseProject(in, out, projects)
 		},
 	)
 	if err != nil {
