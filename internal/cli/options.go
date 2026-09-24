@@ -240,8 +240,8 @@ CORE OPTIONS
       --version --help
 
 TUI COMMANDS
-  /help /clear /model /effort /status /cost /resume /sessions /skills /memory
-  /permissions /config /init /login /logout /exit
+  /help /clear /model /effort /status /diff /export /cost /resume /sessions
+  /skills /memory /permissions /config /init /login /logout /exit
 
 `
 }
