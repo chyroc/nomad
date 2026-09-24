@@ -98,7 +98,6 @@ func (a *activityLine) Finish(final string, spacer bool) {
 	}
 	a.active = false
 	stop, done, rendered := a.stop, a.done, a.rendered
-	label := a.label
 	a.mu.Unlock()
 
 	if rendered {
@@ -108,10 +107,9 @@ func (a *activityLine) Finish(final string, spacer bool) {
 	if rendered {
 		<-done
 	}
-	if final == "" {
-		final = label
+	if final != "" {
+		io.WriteString(a.out, final+"\n")
 	}
-	io.WriteString(a.out, final+"\n")
 	_ = spacer
 }
 

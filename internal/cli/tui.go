@@ -179,6 +179,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 
 	a.startActivity("Working…")
 	a.lastAnswer = ""
+	a.assistantStreamed = false
 	a.thinkingBuf.Reset()
 	a.thinkingStart = time.Time{}
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -236,17 +237,19 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		a.setActivity(a.style(cPurple, "✻") + " " + a.style(cDim, "Thinking…"))
 	case loop.EvAssistantChunk:
 		a.lastAnswer += ev.Content
+		a.assistantStreamed = true
+		a.flushThinking()
+		a.finishActivity("")
+		a.renderAnswer(ev.Content)
 	case loop.EvAssistantMessage:
 		a.flushThinking()
 		a.finishActivity("")
-		if text := strings.TrimSpace(ev.Content); text != "" {
-			if a.color {
-				width, _ := cachedTermSize()
-				a.printf("%s\n", renderMarkdown(text, width, true))
-			} else {
-				a.printf("%s\n\n", text)
-			}
+		if a.assistantStreamed {
+			// Already rendered from the chunk event; the two events
+			// carry the same content.
+			break
 		}
+		a.renderAnswer(ev.Content)
 	case loop.EvToolCall:
 		a.flushThinking()
 		a.finishActivity("")
@@ -266,6 +269,20 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		a.flushThinking()
 		a.printf("%s● %v%s\n", cRed, ev.Content, cReset)
 	}
+}
+
+// renderAnswer prints an assistant text block (markdown when a TTY).
+func (a *App) renderAnswer(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if a.color {
+		width, _ := cachedTermSize()
+		a.printf("%s\n", renderMarkdown(text, width, true))
+		return
+	}
+	a.printf("%s\n\n", text)
 }
 
 // startActivity shows the global working indicator.
@@ -336,9 +353,7 @@ func (a *App) flushThinking() {
 	if body == "" {
 		return
 	}
-	if a.act != nil {
-		a.act.EraseLine()
-	}
+	a.finishActivity("")
 	lines := strings.Split(body, "\n")
 	a.registerFold("reasoning", lines)
 	dur := ""

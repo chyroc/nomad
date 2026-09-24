@@ -53,8 +53,9 @@ type App struct {
 	lastInterrupt time.Time
 	quit          bool
 
-	lastAnswer string
-	skills     []contextinfo.DiscoveredSkill
+	lastAnswer        string
+	skills            []contextinfo.DiscoveredSkill
+	assistantStreamed bool
 
 	toolName string
 	toolArgs string
