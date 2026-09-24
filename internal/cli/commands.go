@@ -20,6 +20,7 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 	switch cmd {
 	case "/exit", "/quit":
 		a.closeRunner()
+		a.printResumeHint()
 		return true, nil
 	case "/help":
 		a.printf("%s\n", commandHelp())
@@ -486,7 +487,7 @@ func commandHelp() string {
 		"  /diff                 show working-tree changes",
 		"  /export [file]        export transcript as markdown (.jsonl for raw)",
 		"  /cost                 show token usage for the session",
-		"  /resume <session-id>  resume a remote session",
+		"  /resume [session-id]  resume a session (picker without id)",
 		"  /sessions             list local transcripts",
 		"  /session              show current session info",
 		"  /skills [name]        list or show skills",

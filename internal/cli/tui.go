@@ -68,6 +68,7 @@ func (a *App) runTUI(ctx context.Context) error {
 				if a.resetTerminalModes != nil {
 					a.resetTerminalModes()
 				}
+				a.printResumeHint()
 				os.Exit(130)
 			}
 		}
@@ -86,6 +87,7 @@ func (a *App) runTUI(ctx context.Context) error {
 		input, err := a.readInput()
 		if errors.Is(err, errEOF) {
 			a.printf("\n")
+			a.printResumeHint()
 			return nil
 		}
 		if err != nil {
