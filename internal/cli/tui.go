@@ -104,6 +104,10 @@ func (a *App) runTUI(ctx context.Context) error {
 			}
 			continue
 		}
+		if strings.HasPrefix(input, "!") {
+			a.runBangCommand(strings.TrimPrefix(input, "!"))
+			continue
+		}
 		if err := a.turn(ctx, transcript, input, nil); err != nil {
 			if errors.Is(err, ark.ErrInterrupted) {
 				a.printf("%sTurn interrupted; context retained.%s\n\n", cYellow, cReset)

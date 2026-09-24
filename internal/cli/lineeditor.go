@@ -27,6 +27,10 @@ type lineEditor struct {
 	completer func(line string) []string
 	onMouse   func(button, x, y int) bool
 	rawState  *term.State
+
+	searching   bool
+	searchQuery []rune
+	searchHit   int
 }
 
 func newLineEditor(in io.Reader, out io.Writer, history []string) *lineEditor {
@@ -249,6 +253,14 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 		case r == 5:
 			cursor = len(buf)
 
+		case r == 18:
+			// Ctrl+R: reverse history search. Matches history entries
+			// containing the current text; repeated presses walk older.
+			if nb, nc, found := e.searchHistory(buf); found {
+				buf, cursor = nb, nc
+				continue
+			}
+
 		case r == 23:
 			i := cursor
 			for i > 0 && (buf[i-1] == ' ' || buf[i-1] == '\t') {
@@ -366,6 +378,7 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 			}
 
 		case r >= 32:
+			e.searching = false
 			buf = append(buf[:cursor], append([]rune{r}, buf[cursor:]...)...)
 			cursor++
 		}
@@ -375,6 +388,32 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 }
 
 func (e *lineEditor) History() []string { return e.history }
+
+// searchHistory performs a substring reverse search over history. The
+// first press uses the current input as the query and jumps to the most
+// recent match; repeated presses walk to older matches. Returns false if
+// nothing matched so the key can be ignored.
+func (e *lineEditor) searchHistory(query []rune) (newBuf []rune, newCursor int, found bool) {
+	q := strings.ToLower(strings.TrimSpace(string(query)))
+	if q == "" {
+		return nil, 0, false
+	}
+	start := len(e.history) - 1
+	if e.searching && string(e.searchQuery) == string(query) && e.searchHit >= 0 {
+		start = e.searchHit - 1
+	}
+	for i := start; i >= 0; i-- {
+		if strings.Contains(strings.ToLower(e.history[i]), q) {
+			e.searching = true
+			e.searchQuery = append(e.searchQuery[:0], query...)
+			e.searchHit = i
+			e.histIdx = i
+			r := []rune(e.history[i])
+			return r, len(r), true
+		}
+	}
+	return nil, 0, false
+}
 
 func normalizePasted(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
