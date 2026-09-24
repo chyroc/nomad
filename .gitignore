@@ -14,3 +14,6 @@ coverage.txt
 .vscode/
 .DS_Store
 CLAUDE.local.md
+
+# vendored reference copies of charmbracelet repos (local only)
+charmbracelet/
