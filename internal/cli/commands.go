@@ -112,7 +112,7 @@ func (a *App) handleCommand(ctx context.Context, transcript *store.SessionStore,
 	case "/logout":
 		return false, a.runLogout()
 	case "/permissions":
-		a.printf("permission mode: %s\n", a.opts.PermissionMode)
+		a.cmdPermissions()
 		return false, nil
 	case "/config":
 		a.cmdConfig(arg)
@@ -509,4 +509,34 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (a *App) cmdPermissions() {
+	modes := []struct{ id, label, desc string }{
+		{"default", "Normal", "ask before every non-read tool"},
+		{"acceptEdits", "Auto-accept edits", "allow read/write/edit, ask for bash"},
+		{"plan", "Plan mode", "read-only; no modifying tools"},
+		{"bypassPermissions", "Bypass permissions", "run every tool without asking"},
+	}
+	items := make([]pickItem, 0, len(modes))
+	sel := 0
+	for i, m := range modes {
+		tag := ""
+		if m.id == a.opts.PermissionMode {
+			tag = "active"
+			sel = i
+		}
+		items = append(items, pickItem{id: m.id, label: m.label, desc: m.desc, tag: tag})
+	}
+	pk := newPickerFull(a.in, a.out, items, sel,
+		"Permission mode",
+		"Controls which tool calls run without asking for the rest of this session.",
+		nil, 0)
+	id, ok := pk.Run()
+	if !ok || id == "" {
+		return
+	}
+	a.opts.PermissionMode = id
+	a.closeRunner()
+	a.printf("%spermission mode: %s%s\n", cGreen, id, cReset)
 }
