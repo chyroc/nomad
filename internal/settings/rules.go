@@ -2,7 +2,6 @@ package settings
 
 import (
 	"encoding/json"
-	"path"
 	"strings"
 )
 
@@ -97,8 +96,8 @@ func firstNonEmpty(values ...string) string {
 }
 
 // commandMatches matches commands against the rule pattern: glob meta
-// characters use path.Match over the full command; a pattern without
-// meta does prefix matching.
+// characters (* ? [) use wildcard matching over the full command; a
+// pattern without meta does prefix matching.
 func commandMatches(pattern, command string) bool {
 	if pattern == "*" {
 		return true
@@ -106,6 +105,72 @@ func commandMatches(pattern, command string) bool {
 	if !strings.ContainsAny(pattern, "*?[") {
 		return strings.HasPrefix(command, pattern)
 	}
-	ok, _ := path.Match(pattern, command)
-	return ok
+	return globMatch(pattern, command)
+}
+
+// globMatch implements shell-style wildcards where * matches any
+// sequence (including spaces), ? one rune and [abc] one of a set.
+func globMatch(pattern, s string) bool {
+	p, t := []rune(pattern), []rune(s)
+	starP, starT := -1, 0
+	i, j := 0, 0
+	for j < len(t) {
+		switch {
+		case i < len(p) && (p[i] == t[j] || p[i] == '?'):
+			i++
+			j++
+		case i < len(p) && p[i] == '[':
+			if end, ok := matchClass(p, i, t[j]); ok {
+				i = end
+				j++
+			} else if starP >= 0 {
+				i = starP + 1
+				starT++
+				j = starT
+			} else {
+				return false
+			}
+		case i < len(p) && p[i] == '*':
+			starP = i
+			starT = j
+			i++
+		case starP >= 0:
+			i = starP + 1
+			starT++
+			j = starT
+		default:
+			return false
+		}
+	}
+	for i < len(p) && p[i] == '*' {
+		i++
+	}
+	return i == len(p)
+}
+
+func matchClass(p []rune, start int, c rune) (int, bool) {
+	k := start + 1
+	negated := false
+	if k < len(p) && (p[k] == '!' || p[k] == '^') {
+		negated = true
+		k++
+	}
+	matched := false
+	for k < len(p) && p[k] != ']' {
+		if k+2 < len(p) && p[k+1] == '-' && p[k+2] != ']' {
+			if c >= p[k] && c <= p[k+2] {
+				matched = true
+			}
+			k += 3
+			continue
+		}
+		if p[k] == c {
+			matched = true
+		}
+		k++
+	}
+	if k >= len(p) {
+		return start, false
+	}
+	return k + 1, matched != negated
 }

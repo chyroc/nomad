@@ -17,6 +17,7 @@ import (
 	"github.com/chyroc/nomad/internal/contextinfo"
 	"github.com/chyroc/nomad/internal/control"
 	"github.com/chyroc/nomad/internal/loop"
+	"github.com/chyroc/nomad/internal/settings"
 )
 
 const (
@@ -39,6 +40,8 @@ type App struct {
 	color bool
 
 	ctrl *control.App
+
+	settings *settings.Settings
 
 	editor *lineEditor
 	act    *activityLine
@@ -162,6 +165,12 @@ func (a *App) Run(ctx context.Context) error {
 	if err := app.EnsureProvision(ctx); err != nil {
 		return fmt.Errorf("provision managed-agents resources: %w\n(run `nomad login` to refresh credentials)", err)
 	}
+	loaded, err := settings.Load(a.paths.UserSettingsFile(), a.paths.ProjectSettingsFile(),
+		a.paths.CompatSettingsFile())
+	if err != nil {
+		return err
+	}
+	a.settings = loaded
 	if a.model == "" {
 		a.model = app.Profile.Model
 	}
@@ -216,7 +225,11 @@ func (a *App) sessionSystem(ctx context.Context) string {
 }
 
 func (a *App) permMode() ark.PermissionMode {
-	switch a.opts.PermissionMode {
+	mode := a.opts.PermissionMode
+	if !a.opts.PermissionModeSet && a.settings != nil && a.settings.DefaultMode != "" {
+		mode = a.settings.DefaultMode
+	}
+	switch mode {
 	case "acceptEdits":
 		return ark.PermEdit
 	case "plan":

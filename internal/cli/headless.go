@@ -99,7 +99,7 @@ func (a *App) runHeadless(ctx context.Context) error {
 
 func (a *App) newRunner(ctx context.Context, remoteSessionID string, ask func(string, string) string) (*ark.Runner, error) {
 	allowed, disallowed := a.toolSets()
-	return a.ctrl.NewRunner(ctx, ark.RunnerOptions{
+	opts := ark.RunnerOptions{
 		Profile:         a.ctrl.Profile,
 		SessionID:       remoteSessionID,
 		Workspace:       a.paths.Workspace,
@@ -111,7 +111,12 @@ func (a *App) newRunner(ctx context.Context, remoteSessionID string, ask func(st
 		Ask:             ask,
 		MaxToolTurns:    a.opts.MaxTurns,
 		ReasoningEffort: a.opts.ReasoningEffort,
-	})
+	}
+	if a.settings != nil {
+		opts.AllowRules = a.settings.AllowRules
+		opts.DenyRules = a.settings.DenyRules
+	}
+	return a.ctrl.NewRunner(ctx, opts)
 }
 
 // resumeSessionID resolves --resume/--continue to a remote session id.

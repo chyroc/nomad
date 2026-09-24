@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/chyroc/nomad/internal/settings"
 	"github.com/volcengine/ark-runtime-go/arkruntime/selfhosted"
 	"github.com/volcengine/ark-runtime-go/arkruntime/toolset"
 )
@@ -24,6 +26,27 @@ type gatedTool struct {
 }
 
 type turnCounter struct{ n int }
+
+// ruleSet is a mutex-guarded mutable collection of settings rules so
+// newly granted "always allow" rules take effect on the live runner.
+type ruleSet struct {
+	mu    sync.Mutex
+	allow []settings.Rule
+	deny  []settings.Rule
+}
+
+func (s *ruleSet) snapshot() ([]settings.Rule, []settings.Rule) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]settings.Rule(nil), s.allow...), append([]settings.Rule(nil), s.deny...)
+}
+
+// AddAllowRule appends an allow rule to the live set.
+func (s *ruleSet) AddAllowRule(rule settings.Rule) {
+	s.mu.Lock()
+	s.allow = append(s.allow, rule)
+	s.mu.Unlock()
+}
 
 func (g *gatedTool) Name() string { return g.inner.Name() }
 
@@ -84,25 +107,38 @@ const (
 	AnswerSession = "session"
 )
 
-// decidePermission implements the permission policy decision.
-func decidePermission(
-	mode PermissionMode,
-	allowed, disallowed map[string]bool,
-	sessionAllowed map[string]bool,
-	ask func(string, string) string,
-	name string,
-	input json.RawMessage,
-) (bool, string) {
-	if disallowed[name] {
+// gateOptions collects every input to one permission decision.
+type gateOptions struct {
+	mode           PermissionMode
+	allowed        map[string]bool
+	disallowed     map[string]bool
+	sessionAllowed map[string]bool
+	allowRules     []settings.Rule
+	denyRules      []settings.Rule
+	ask            func(string, string) string
+}
+
+// decidePermission implements the permission policy decision:
+// flag disable, settings deny, settings allow, flag allow, session
+// grant, mode policy, then interactive ask.
+func decidePermission(g gateOptions, name string, input json.RawMessage) (bool, string) {
+	if g.disallowed[name] {
 		return false, "tool is disabled"
 	}
-	if len(allowed) > 0 && allowed[name] {
+	if rule, ok := settings.MatchAny(g.denyRules, name, input); ok {
+		return false, "denied by settings rule " + rule.String()
+	}
+	if rule, ok := settings.MatchAny(g.allowRules, name, input); ok {
+		_ = rule
 		return true, ""
 	}
-	if len(sessionAllowed) > 0 && sessionAllowed[name] {
+	if len(g.allowed) > 0 && g.allowed[name] {
 		return true, ""
 	}
-	switch mode {
+	if len(g.sessionAllowed) > 0 && g.sessionAllowed[name] {
+		return true, ""
+	}
+	switch g.mode {
 	case PermBypass:
 		return true, ""
 	case PermPlan:
@@ -119,13 +155,13 @@ func decidePermission(
 			return true, ""
 		}
 	}
-	if len(allowed) > 0 {
+	if len(g.allowed) > 0 {
 		return false, "tool not in allow list"
 	}
-	if ask == nil {
+	if g.ask == nil {
 		return false, "non-interactive session denied tool (use --permission-mode bypassPermissions to allow)"
 	}
-	switch strings.ToLower(strings.TrimSpace(ask(name, compactArgs(input)))) {
+	switch strings.ToLower(strings.TrimSpace(g.ask(name, compactArgs(input)))) {
 	case AnswerAllow, AnswerOnce, AnswerSession, "y", "yes":
 		return true, ""
 	}

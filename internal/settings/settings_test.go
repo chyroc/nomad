@@ -97,6 +97,31 @@ func TestRuleMatchBashStar(t *testing.T) {
 	}
 }
 
+func TestGlobMatchSpacesAndClasses(t *testing.T) {
+	cases := []struct {
+		pattern, s string
+		want       bool
+	}{
+		{"rm*", "rm -rf /tmp/x", true},
+		{"npm run *", "npm run build", true},
+		{"git *", "git push origin", true},
+		{"git *", "hg push", false},
+		{"test?", "tests", true},
+		{"test?", "testing", false},
+		{"[rg]m*", "rm -f", true},
+		{"[rg]m*", "gm", true},
+		{"[!rg]m*", "xm", true},
+		{"[!rg]m*", "rm", false},
+		{"exact", "exact", true},
+		{"exact", "exactly", false},
+	}
+	for _, c := range cases {
+		if got := globMatch(c.pattern, c.s); got != c.want {
+			t.Errorf("globMatch(%q,%q)=%v want %v", c.pattern, c.s, got, c.want)
+		}
+	}
+}
+
 func TestMatchAny(t *testing.T) {
 	rules := []Rule{
 		mustRule("read"),

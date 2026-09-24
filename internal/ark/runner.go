@@ -15,6 +15,7 @@ import (
 	"github.com/volcengine/ark-runtime-go/arkruntime/toolset"
 
 	"github.com/chyroc/nomad/internal/loop"
+	"github.com/chyroc/nomad/internal/settings"
 )
 
 // PermissionMode controls which tool calls run without asking.
@@ -43,6 +44,7 @@ type Runner struct {
 	client          *Client
 	api             *selfhosted.ClientAPI
 	tools           *toolset.Set
+	rules           *ruleSet
 	reasoningEffort string
 
 	sessionID string
@@ -65,6 +67,8 @@ type RunnerOptions struct {
 	Permission      PermissionMode
 	AllowedTools    map[string]bool
 	Disallowed      map[string]bool
+	AllowRules      []settings.Rule
+	DenyRules       []settings.Rule
 	Ask             func(toolName, arguments string) string
 	ToolTimeout     time.Duration
 	MaxToolTurns    int
@@ -89,6 +93,10 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 	allowed, disallowed := o.AllowedTools, o.Disallowed
 	var sessionMu sync.Mutex
 	sessionAllowed := map[string]bool{}
+	rulesHolder := &ruleSet{
+		allow: append([]settings.Rule(nil), o.AllowRules...),
+		deny:  append([]settings.Rule(nil), o.DenyRules...),
+	}
 	var ask func(string, string) string
 	if o.Ask != nil {
 		ask = func(name, args string) string {
@@ -106,7 +114,16 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		sessionMu.Lock()
 		sess := sessionAllowed
 		sessionMu.Unlock()
-		return decidePermission(perm, allowed, disallowed, sess, ask, name, input)
+		allowRules, denyRules := rulesHolder.snapshot()
+		return decidePermission(gateOptions{
+			mode:           perm,
+			allowed:        allowed,
+			disallowed:     disallowed,
+			sessionAllowed: sess,
+			allowRules:     allowRules,
+			denyRules:      denyRules,
+			ask:            ask,
+		}, name, input)
 	}
 	tools, err := newGatedToolSet(o.Workspace, toolTimeout, decide, o.MaxToolTurns)
 	if err != nil {
@@ -118,6 +135,7 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		client:          o.Client,
 		api:             api,
 		tools:           tools,
+		rules:           rulesHolder,
 		reasoningEffort: o.ReasoningEffort,
 		cfg: RunConfig{
 			Model:           o.Model,
@@ -201,6 +219,10 @@ func injectOverrides(raw []byte, overrides map[string]interface{}) ([]byte, erro
 
 // SessionID implements loop.Runner.
 func (r *Runner) SessionID() string { return r.sessionID }
+
+// AddAllowRule appends a live allow rule so an interactive grant takes
+// effect for the rest of the current runner.
+func (r *Runner) AddAllowRule(rule settings.Rule) { r.rules.AddAllowRule(rule) }
 
 // Subscribe implements loop.Runner.
 func (r *Runner) Subscribe(o loop.Observer) { r.obs = append(r.obs, o) }

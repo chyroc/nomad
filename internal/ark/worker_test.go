@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/chyroc/nomad/internal/settings"
 	"github.com/volcengine/ark-runtime-go/arkruntime/toolset"
 )
 
@@ -51,17 +52,62 @@ func TestGatedTool_Deny(t *testing.T) {
 
 func TestDecidePermissionSessionAllow(t *testing.T) {
 	ask := func(string, string) string { return "session" }
-	allowed, denied := decidePermission(PermDefault, nil, nil, nil, ask, "write", json.RawMessage(`{}`))
+	g := gateOptions{mode: PermDefault, ask: ask}
+	allowed, denied := decidePermission(g, "write", json.RawMessage(`{}`))
 	if !allowed || denied != "" {
 		t.Fatalf("first session answer should allow: %v %q", allowed, denied)
 	}
 	sessionMap := map[string]bool{"write": true}
-	allowed, denied = decidePermission(PermDefault, nil, nil, sessionMap, ask, "write", json.RawMessage(`{}`))
+	g.sessionAllowed = sessionMap
+	allowed, denied = decidePermission(g, "write", json.RawMessage(`{}`))
 	if !allowed || denied != "" {
 		t.Fatalf("session-remembered tool should allow without asking")
 	}
-	allowed, _ = decidePermission(PermDefault, nil, nil, sessionMap, nil, "bash", json.RawMessage(`{}`))
+	gNoAsk := gateOptions{mode: PermDefault, sessionAllowed: sessionMap}
+	allowed, _ = decidePermission(gNoAsk, "bash", json.RawMessage(`{}`))
 	if allowed {
 		t.Fatalf("other tools should not be implicitly allowed")
+	}
+}
+
+func TestDecidePermissionSettingsRules(t *testing.T) {
+	rule := func(s string) settings.Rule {
+		r, ok := settings.ParseRule(s)
+		if !ok {
+			t.Fatalf("bad rule %q", s)
+		}
+		return r
+	}
+	bashInput := json.RawMessage(`{"command":"rm -rf /tmp/x"}`)
+	g := gateOptions{
+		mode:       PermBypass,
+		denyRules:  []settings.Rule{rule("bash(rm*)")},
+		allowRules: []settings.Rule{rule("read")},
+	}
+	if allowed, reason := decidePermission(g, "bash", bashInput); allowed {
+		t.Fatalf("deny rule must win even in bypass mode (got allow, reason %q)", reason)
+	}
+	if allowed, _ := decidePermission(g, "read", json.RawMessage(`{}`)); !allowed {
+		t.Fatal("allow rule should permit read")
+	}
+}
+
+func TestDecidePermissionFlagDisallowBeatsSettings(t *testing.T) {
+	rule, _ := settings.ParseRule("write")
+	g := gateOptions{
+		mode:       PermBypass,
+		disallowed: map[string]bool{"write": true},
+		allowRules: []settings.Rule{rule},
+	}
+	if allowed, _ := decidePermission(g, "write", json.RawMessage(`{}`)); allowed {
+		t.Fatal("flag-disallowed tool must never be rescued by settings")
+	}
+}
+
+func TestDecidePermissionHeadlessDefaultDeny(t *testing.T) {
+	g := gateOptions{mode: PermDefault}
+	allowed, reason := decidePermission(g, "bash", json.RawMessage(`{"command":"ls"}`))
+	if allowed || reason == "" {
+		t.Fatalf("headless default mode must deny bash: %v %q", allowed, reason)
 	}
 }
