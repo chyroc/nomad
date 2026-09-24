@@ -179,11 +179,40 @@ func (r *Runner) createSession(ctx context.Context, p Profile) error {
 	req.Agent = session.NewOptAgentIdentifier(ref)
 
 	sess, err := r.client.Runtime().CreateSession(ctx, req)
+	if err != nil && modelID != "" && isReasoningEffortError(err) {
+		// Catalog metadata can advertise an effort level the override
+		// endpoint rejects; retry once with a model-only override.
+		retryRef := session.NewAgentRefAgentIdentifier(session.AgentRef{
+			Type: "agent", ID: session.NewOptString(p.AgentID),
+		})
+		raw, _ := json.Marshal(map[string]interface{}{
+			"type":  "agent_with_overrides",
+			"id":    p.AgentID,
+			"model": map[string]interface{}{"id": modelID},
+		})
+		if uerr := json.Unmarshal(raw, &retryRef); uerr == nil {
+			retryReq := &session.CreateSessionRequest{
+				EnvironmentID: session.NewOptString(p.EnvironmentID),
+				Agent:         session.NewOptAgentIdentifier(retryRef),
+			}
+			sess, err = r.client.Runtime().CreateSession(ctx, retryReq)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("ma: create session: %w", err)
 	}
 	r.sessionID = sess.ID
 	return nil
+}
+
+// isReasoningEffortError reports whether a create-session failure is the
+// server rejecting the model.reasoning_effort override specifically.
+func isReasoningEffortError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "reasoning_effort")
 }
 
 func injectOverrides(raw []byte, overrides map[string]interface{}) ([]byte, error) {
@@ -289,6 +318,10 @@ func (r *Runner) UploadAttachment(ctx context.Context, a loop.Attachment) (loop.
 	return a, nil
 }
 
+// resolveEffort maps the requested effort onto what the model accepts.
+// It returns "" when the model has no reasoning_effort levels, in which
+// case the parameter must be omitted entirely (sending it makes the API
+// reject session creation with 400 InvalidParameter).
 func (r *Runner) resolveEffort(ctx context.Context, modelID string) string {
 	requested := r.reasoningEffort
 	if requested == "" {
@@ -296,12 +329,15 @@ func (r *Runner) resolveEffort(ctx context.Context, modelID string) string {
 	}
 	models, err := r.client.ListModels(ctx)
 	if err != nil {
-		return requested
+		return ""
 	}
 	for _, m := range models {
-		if (m.ID == modelID || m.RuntimeID == modelID) && len(m.Efforts) > 0 {
+		if m.ID == modelID || m.RuntimeID == modelID || m.SelectID() == modelID {
+			if len(m.Efforts) == 0 {
+				return ""
+			}
 			return ResolveEffort(requested, m.Efforts)
 		}
 	}
-	return requested
+	return ""
 }
