@@ -289,14 +289,10 @@ func (a *App) finishActivity(final string) {
 // beginTool renders the cc-style "⏺ Name(args)" invocation line and a
 // running spinner while the tool executes.
 func (a *App) beginTool(name, arguments string) {
-	args := oneLine(arguments, 100)
-	argPart := ""
-	if args != "" && args != "{}" {
-		argPart = a.style(cDim, "("+oneLine(arguments, 80)+")")
-	}
 	a.toolName = name
-	a.toolArgs = args
-	a.printf("%s %s%s%s\n", a.style(cPurple, "⏺"), a.style(cBold, name), argPart, cReset)
+	a.toolArgs = arguments
+	display := toolInvocation(name, arguments, 90)
+	a.printf("%s %s%s\n", a.style(cPurple, "⏺"), a.style(cBold, name), display)
 	a.startActivity(a.style(cPurple, "⠿") + " " + a.style(cDim, "Running "+name+"…"))
 }
 
@@ -321,9 +317,8 @@ func (a *App) finishTool(ev loop.Event) {
 	for _, l := range head {
 		a.printf("%s  %s%s\n", color, l, cReset)
 	}
-	id := a.registerFold(ev.ToolName, strings.Split(body, "\n"))
+	a.registerFold(ev.ToolName, strings.Split(body, "\n"))
 	a.printf("%s\n", foldBar(more))
-	_ = id
 	for _, l := range tail {
 		a.printf("%s  %s%s\n", color, l, cReset)
 	}
@@ -423,7 +418,7 @@ func (a *App) replay(evs []loop.Event) {
 // askToolPermission is the interactive permission callback (default mode).
 func (a *App) askToolPermission(name, args string) string {
 	a.finishActivity("")
-	return a.askPermissionChoice(name, oneLine(args, 100))
+	return a.askPermissionChoice(name, args)
 }
 
 var _ = ark.PermDefault
