@@ -311,13 +311,14 @@ func (a *App) finishActivity(final string) {
 	}
 }
 
-// beginTool renders the cc-style "⏺ Name(args)" invocation line and a
-// running spinner while the tool executes.
+// beginTool renders the "⏺ Name(args)" invocation line, a diff preview
+// for edits and a running spinner while the tool executes.
 func (a *App) beginTool(name, arguments string) {
 	a.toolName = name
 	a.toolArgs = arguments
 	display := toolInvocation(name, arguments, 90)
 	a.printf("%s %s%s\n", a.style(cPurple, "⏺"), a.style(cBold, name), display)
+	a.renderToolDiff(name, arguments)
 	a.startActivity(a.style(cPurple, "⠿") + " " + a.style(cDim, "Running "+name+"…"))
 }
 

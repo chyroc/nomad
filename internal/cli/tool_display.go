@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// toolInvocation renders a tool call argument JSON the way Claude Code
-// does: the salient positional value as a short parenthetical, e.g.
+// toolInvocation renders the salient positional value of a tool call's
+// JSON arguments as a short parenthetical, e.g.
 //
 //	bash("echo hi")
 //	read(path/to/file)

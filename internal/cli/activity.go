@@ -7,11 +7,10 @@ import (
 	"time"
 )
 
-// activityLine is a single self-erasing status line in the style of
-// Claude Code: a braille spinner plus a label while running
-// ("⠋ Bash(sleep 1)"), replaced in place by a final static line
-// ("⏺ Bash(...) …" / "✓ …" / "✗ …") when finished. Only one is shown
-// at a time per App; it never scrolls while active.
+// activityLine is a single self-erasing status line: a braille spinner
+// plus a label while running, replaced in place by a final static line
+// when finished. Only one is shown at a time per App; it never scrolls
+// while active.
 type activityLine struct {
 	out   io.Writer
 	color bool
