@@ -23,3 +23,6 @@ charmbracelet/
 
 # local codex workspace
 /codex/
+
+# local agent workspace
+.claude/
