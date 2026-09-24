@@ -74,7 +74,11 @@ func codingTools() []toolConfig {
 	return out
 }
 
-// EnsureEnvironment creates a self_hosted environment if id is empty.
+// environmentName is the fixed self-hosted environment nomad reuses.
+const environmentName = "nomad-self-hosted"
+
+// EnsureEnvironment creates a self_hosted environment if id is empty,
+// reusing an existing one with the standard name on a 409 conflict.
 func (c *Client) EnsureEnvironment(ctx context.Context, id string) (string, error) {
 	if id != "" {
 		if _, err := c.getEnvironment(ctx, id); err == nil {
@@ -82,20 +86,53 @@ func (c *Client) EnsureEnvironment(ctx context.Context, id string) (string, erro
 		}
 	}
 	body := map[string]interface{}{
-		"name":        "nomad-self-hosted",
+		"name":        environmentName,
 		"description": "Auto-provisioned by nomad CLI",
 		"config":      map[string]string{"type": "self_hosted"},
 	}
 	var out struct {
 		ID string `json:"id"`
 	}
-	if err := c.doJSON(ctx, http.MethodPost, "/environments", body, &out); err != nil {
-		return "", fmt.Errorf("ma: create environment: %w", err)
+	err := c.doJSON(ctx, http.MethodPost, "/environments", body, &out)
+	if err != nil {
+		if !isConflictError(err) {
+			return "", fmt.Errorf("ma: create environment: %w", err)
+		}
+		existing, ferr := c.findEnvironmentByName(ctx, environmentName)
+		if ferr != nil || existing == "" {
+			return "", fmt.Errorf("ma: create environment: %w (and lookup of existing %q failed: %v)",
+				err, environmentName, ferr)
+		}
+		return existing, nil
 	}
 	if out.ID == "" {
 		return "", fmt.Errorf("ma: create environment returned no id")
 	}
 	return out.ID, nil
+}
+
+// findEnvironmentByName lists environments and returns the id of the
+// first one matching name.
+func (c *Client) findEnvironmentByName(ctx context.Context, name string) (string, error) {
+	var list struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/environments", nil, &list); err != nil {
+		return "", err
+	}
+	for _, e := range list.Data {
+		if e.Name == name && e.ID != "" {
+			return e.ID, nil
+		}
+	}
+	return "", nil
+}
+
+func isConflictError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "HTTP 409")
 }
 
 func (c *Client) getEnvironment(ctx context.Context, id string) (json.RawMessage, error) {
@@ -131,13 +168,40 @@ func (c *Client) EnsureAgent(ctx context.Context, id, model string, extraSystem 
 	var out struct {
 		ID string `json:"id"`
 	}
-	if err := c.doJSON(ctx, http.MethodPost, "/agents", body, &out); err != nil {
-		return "", fmt.Errorf("ma: create agent: %w", err)
+	err := c.doJSON(ctx, http.MethodPost, "/agents", body, &out)
+	if err != nil {
+		if !isConflictError(err) {
+			return "", fmt.Errorf("ma: create agent: %w", err)
+		}
+		existing, ferr := c.findAgentByName(ctx, "nomad-coding-agent")
+		if ferr != nil || existing == "" {
+			return "", fmt.Errorf("ma: create agent: %w (lookup of existing agent failed: %v)", err, ferr)
+		}
+		return existing, nil
 	}
 	if out.ID == "" {
 		return "", fmt.Errorf("ma: create agent returned no id")
 	}
 	return out.ID, nil
+}
+
+// findAgentByName lists agents and returns the id of the first match.
+func (c *Client) findAgentByName(ctx context.Context, name string) (string, error) {
+	var list struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/agents", nil, &list); err != nil {
+		return "", err
+	}
+	for _, a := range list.Data {
+		if a.Name == name && a.ID != "" {
+			return a.ID, nil
+		}
+	}
+	return "", nil
 }
 
 func (c *Client) getAgent(ctx context.Context, id string) (json.RawMessage, error) {
