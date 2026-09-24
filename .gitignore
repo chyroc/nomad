@@ -20,3 +20,6 @@ charmbracelet/
 
 # local-only e2e tests
 /e2e/
+
+# local codex workspace
+/codex/
