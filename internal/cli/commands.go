@@ -149,7 +149,7 @@ func (a *App) cmdModel(ctx context.Context, arg string) {
 			selIdx = i
 		}
 	}
-	efforts := effortLadder
+	efforts := ark.EffortLadder
 	effortIdx := effortIndex(efforts, a.opts.ReasoningEffort)
 	pk := newPickerFull(a.in, a.out, items, selIdx,
 		"Select model",
@@ -169,12 +169,27 @@ func (a *App) cmdModel(ctx context.Context, arg string) {
 	}
 	a.closeRunner()
 	note := ""
-	if supported := a.currentModelEfforts(ctx); len(supported) > 0 {
-		if effective := ark.ResolveEffort(a.opts.ReasoningEffort, supported); effective != a.opts.ReasoningEffort {
+	if wire, known := ark.EffectiveEffort(res.id, a.opts.ReasoningEffort); known && wire != a.opts.ReasoningEffort && wire != "" {
+		note = " · model will use " + wire
+	} else if supported := a.modelListEfforts(ctx, res.id); len(supported) > 0 {
+		if effective := ark.ResolveEffort(a.opts.ReasoningEffort, supported); effective != a.opts.ReasoningEffort && effective != "" {
 			note = " · model will use " + effective
 		}
 	}
 	a.printf("%smodel: %s · effort: %s%s%s\n", cGreen, res.id, a.opts.ReasoningEffort, note, cReset)
+}
+
+func (a *App) modelListEfforts(ctx context.Context, modelID string) []string {
+	models, err := a.ctrl.Client.ListModels(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, m := range models {
+		if m.SelectID() == modelID {
+			return m.Efforts
+		}
+	}
+	return nil
 }
 
 func effortIndex(efforts []string, current string) int {
@@ -189,8 +204,6 @@ func effortIndex(efforts []string, current string) int {
 	return len(efforts) - 1
 }
 
-var effortLadder = []string{"low", "medium", "high", "xhigh", "max"}
-
 func (a *App) currentModelEfforts(ctx context.Context) []string {
 	models, err := a.ctrl.Client.ListModels(ctx)
 	if err != nil {
@@ -202,6 +215,22 @@ func (a *App) currentModelEfforts(ctx context.Context) []string {
 		}
 	}
 	return nil
+}
+
+// effortMenuInfo returns the per-level menu for the current model from
+// the documented base table; nil when undocumented (caller falls back
+// to live model-list metadata).
+func (a *App) effortMenuInfo() []ark.ModelEffortInfo {
+	return ark.EffortMenu(a.model)
+}
+
+// effectiveEffortNote returns a human note when the chosen level is
+// sent to the server under a different value for this model.
+func (a *App) effectiveEffortNote(level string) string {
+	if wire, known := ark.EffectiveEffort(a.model, level); known && wire != level && wire != "" {
+		return " · current model will use " + wire
+	}
+	return ""
 }
 
 func (a *App) cmdEffort(ctx context.Context, arg string) {
@@ -216,10 +245,12 @@ func (a *App) cmdEffort(ctx context.Context, arg string) {
 		if session {
 			scope = "this session"
 		}
-		note := ""
-		if supported := a.currentModelEfforts(ctx); len(supported) > 0 {
-			if effective := ark.ResolveEffort(level, supported); effective != level {
-				note = " · current model will use " + effective
+		note := a.effectiveEffortNote(level)
+		if note == "" {
+			if supported := a.currentModelEfforts(ctx); len(supported) > 0 {
+				if effective := ark.ResolveEffort(level, supported); effective != level && effective != "" {
+					note = " · current model will use " + effective
+				}
 			}
 		}
 		a.printf("%seffort: %s · %s%s%s\n", cGreen, level, scope, note, cReset)
@@ -228,19 +259,31 @@ func (a *App) cmdEffort(ctx context.Context, arg string) {
 		apply(arg, false)
 		return
 	}
-	supported := map[string]bool{}
-	for _, e := range a.currentModelEfforts(ctx) {
-		supported[e] = true
-	}
-	items := make([]pickItem, 0, len(effortLadder))
-	for _, e := range effortLadder {
-		tag := ""
-		if len(supported) > 0 && !supported[e] {
-			tag = "unsupported by current model"
+
+	items := make([]pickItem, 0, len(ark.EffortLadder))
+	if menu := a.effortMenuInfo(); menu != nil {
+		for _, info := range menu {
+			tag := ""
+			if !info.Supported {
+				tag = "maps to " + info.Wire
+			}
+			items = append(items, pickItem{id: info.Level, label: info.Level, tag: tag})
 		}
-		items = append(items, pickItem{id: e, label: e, tag: tag})
+	} else {
+		supported := map[string]bool{}
+		for _, e := range a.currentModelEfforts(ctx) {
+			supported[e] = true
+		}
+		for _, e := range ark.EffortLadder {
+			tag := ""
+			if len(supported) > 0 && !supported[e] {
+				tag = "unsupported by current model"
+			}
+			items = append(items, pickItem{id: e, label: e, tag: tag})
+		}
 	}
-	pk := newPickerFull(a.in, a.out, items, effortIndex(effortLadder, a.opts.ReasoningEffort),
+
+	pk := newPickerFull(a.in, a.out, items, effortIndex(ark.EffortLadder, a.opts.ReasoningEffort),
 		"Select thinking effort",
 		"Depth of reasoning before answering. Enter saves as default, s applies to this session.",
 		nil, 0).withSessionSave()
