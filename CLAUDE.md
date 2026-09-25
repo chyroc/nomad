@@ -54,6 +54,9 @@ Ark. This file guides the coding agent working on the repository.
   every commit.
 - Follow Conventional Commits (English prefix: `feat:`/`fix:`/`docs:`/
   `test:`/`chore:`), body in English.
+- English everywhere: skills, documentation, comments and commit
+  messages stay in English. Chinese only where it is the content under
+  test (e.g. CJK width fixtures) or copy that is intentionally Chinese.
 - Exported symbols need doc comments; avoid unused options/fields.
 - The CLI is non-interactive when stdin is not a TTY; permission prompts
   must auto-deny rather than hang in headless mode.
