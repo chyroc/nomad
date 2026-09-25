@@ -1,61 +1,105 @@
 package cli
 
 import (
-	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/charmbracelet/x/ansi"
+	"time"
 )
 
-func (a *App) statusline() string {
+// statusBar renders the two pinned status rows that live directly
+// under the input frame's bottom rule.
+type statusBar struct {
+	clock func() time.Time
+}
+
+func newStatusBar() *statusBar {
+	return &statusBar{clock: time.Now}
+}
+
+// render returns the two status rows truncated to fit one cell short
+// of the width, counting East Asian ambiguous runes as two cells so
+// the rows cannot wrap on any terminal.
+func (b *statusBar) render(a *App, width int) (string, string) {
+	if width < 8 {
+		width = 8
+	}
+	return truncateStatusRow(b.infoLine(a), width-2), truncateStatusRow(b.hintLine(a), width-2)
+}
+
+func truncateStatusRow(s string, w int) string {
+	if displayWidth(s) <= w {
+		return s
+	}
+	return truncateDisplayWidth(s, w-1) + "…"
+}
+
+func (b *statusBar) infoLine(a *App) string {
 	var parts []string
-	parts = append(parts, a.style(cBold, modelShort(a.model)))
-	parts = append(parts, a.style(cDim, "effort:"+a.effortLabel()))
-	if br := gitBranch(a.paths.Workspace); br != "" {
-		parts = append(parts, a.style(cGreen, "⎇ "+br))
+	parts = append(parts, repoSegment(a.paths.Workspace))
+	if seg := gitSegment(a.paths.Workspace); seg != "" {
+		parts = append(parts, a.style(cGreen, seg))
 	}
-	if a.sessionID != "" {
-		parts = append(parts, a.style(cDim, a.sessionID))
-	}
+	parts = append(parts, a.style(cCyan, modelShort(a.model))+a.style(cDim, "["+a.effortLabel()+"]"))
+	parts = append(parts, a.style(cDim, "ark"))
 	if a.goal != nil && a.goal.Active() {
 		parts = append(parts, a.style(cGreen, "◉ goal "+strconv.Itoa(a.goal.Iterations)))
 	}
-	parts = append(parts, a.style(cDim, a.workdirShort()))
-	sep := a.style(cDim, " · ")
-	return strings.Join(parts, sep)
+	return a.style(cDim, "["+b.clock().Format("15:04")+"]") + " " + strings.Join(parts, a.style(cDim, " | "))
+}
+
+func (b *statusBar) hintLine(a *App) string {
+	return permissionModeHint(a, a.effectivePermissionMode()) + a.style(cDim, " · ← for agents")
+}
+
+func permissionModeHint(a *App, mode string) string {
+	label := "manual mode"
+	switch mode {
+	case "bypassPermissions":
+		label = "bypass permissions on"
+	case "acceptEdits":
+		label = "accept edits on"
+	case "plan":
+		label = "plan mode on"
+	}
+	return a.style(cRed, "⏵⏵ "+label+" (shift+tab to cycle)")
 }
 
 func modelShort(id string) string {
-	name := strings.TrimPrefix(id, "doubao-")
-	return name
+	return strings.TrimPrefix(id, "doubao-")
 }
 
-func (a *App) workdirShort() string {
-	dir := a.paths.Workspace
-	if h := os.Getenv("HOME"); h != "" && strings.HasPrefix(dir, h) {
-		rel := strings.TrimPrefix(dir, h)
-		if rel == "" || rel == "/" {
-			return "~"
-		}
-		return "~" + rel
+func repoSegment(dir string) string {
+	base := filepath.Base(dir)
+	parent := filepath.Base(filepath.Dir(dir))
+	if parent == "" || parent == "." || parent == string(filepath.Separator) {
+		return base
 	}
-	return filepath.Base(dir)
+	return parent + "/" + base
 }
 
-func (a *App) modeLine() string {
-	mode := a.opts.PermissionMode
-	switch mode {
-	case "bypassPermissions":
-		return a.style(cYellow, "⏵ bypass permissions on")
-	case "acceptEdits":
-		return a.style(cYellow, "⏵ accept edits on")
-	case "plan":
-		return a.style(cYellow, "⏵ plan mode on")
-	default:
-		return a.style(cDim, "⏵ manual mode · Enter confirms prompts")
+func gitSegment(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "status", "--porcelain", "--branch").Output()
+	if err != nil {
+		return ""
 	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	head := strings.TrimPrefix(lines[0], "## ")
+	branch := head
+	if i := strings.Index(branch, "..."); i >= 0 {
+		branch = branch[:i]
+	}
+	if i := strings.IndexAny(branch, " "); i >= 0 {
+		branch = branch[:i]
+	}
+	if branch == "" {
+		return ""
+	}
+	if len(lines) > 1 {
+		return branch + "+"
+	}
+	return branch
 }
 
 func (a *App) effortLabel() string {
@@ -63,10 +107,4 @@ func (a *App) effortLabel() string {
 		return "max"
 	}
 	return a.opts.ReasoningEffort
-}
-
-func (a *App) printStatusline() {
-	width, _ := cachedTermSize()
-	line := ansi.Truncate(a.statusline(), width-1, "…")
-	a.printf("%s\n", line)
 }

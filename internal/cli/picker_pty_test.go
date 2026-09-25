@@ -99,6 +99,26 @@ func (g *grid) put(ch rune) {
 	g.col++
 }
 
+func (g *grid) clearLine(mode int) {
+	if g.r < 1 || g.r > screenRows {
+		return
+	}
+	switch mode {
+	case 1:
+		for c := 1; c <= g.col && c <= screenCols; c++ {
+			g.c[g.r-1][c-1] = ' '
+		}
+	case 2:
+		for c := range g.c[g.r-1] {
+			g.c[g.r-1][c] = ' '
+		}
+	default:
+		for c := g.col; c <= screenCols; c++ {
+			g.c[g.r-1][c-1] = ' '
+		}
+	}
+}
+
 func (g *grid) clearFromCursor(mode int) {
 	switch mode {
 	case 1:
@@ -179,6 +199,12 @@ func render(raw string) string {
 					fmt.Sscanf(body[:len(body)-1], "%d", &mode)
 				}
 				g.clearFromCursor(mode)
+			case 'K':
+				mode := 0
+				if body != "" {
+					fmt.Sscanf(body, "%d", &mode)
+				}
+				g.clearLine(mode)
 			}
 			continue
 		}

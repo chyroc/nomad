@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -180,6 +183,9 @@ func (a *App) newRunner(ctx context.Context, remoteSessionID string, ask func(st
 	if a.appSettings != nil {
 		opts.AllowRules = a.appSettings.AllowRules
 		opts.DenyRules = a.appSettings.DenyRules
+	}
+	if f, err := os.OpenFile(filepath.Join(a.paths.DataDir, "worker.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		opts.WorkerLogger = log.New(f, "", log.LstdFlags)
 	}
 	return a.ctrl.NewRunner(ctx, opts)
 }

@@ -234,6 +234,7 @@ func (r *Runner) startToolWorker(ctx context.Context) (<-chan selfhosted.ToolCal
 		Tools:             r.tools,
 		ToolTimeout:       r.cfg.ToolTimeout,
 		EventPollInterval: 2 * time.Second,
+		Logger:            r.workerLogger,
 	})
 	results := make(chan selfhosted.ToolCallResult, 16)
 	go func() {

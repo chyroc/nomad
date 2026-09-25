@@ -141,6 +141,10 @@ func (r *Runner) handleStreamEvent(ev selfhosted.Event, st *turnState) (idle, te
 			if json.Unmarshal(raw, &u) == nil {
 				r.usage.InputTokens += u.InputTokens
 				r.usage.OutputTokens += u.OutputTokens
+				r.emit(loop.Event{Kind: loop.EvUsage, Usage: &loop.Usage{
+					InputTokens:  r.usage.InputTokens,
+					OutputTokens: r.usage.OutputTokens,
+				}})
 			}
 		}
 

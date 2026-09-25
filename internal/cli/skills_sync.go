@@ -59,7 +59,7 @@ func (a *App) syncSkills(ctx context.Context, preSelected []string, nonInteracti
 		a.printf("%sAbout to upload ONLY name+description (no SKILL.md body) for %d skill(s) and bind them to agent %s.%s\n",
 			cYellow, len(chosen), a.ctrl.Profile.AgentID, cReset)
 		a.printf("%sProceed? type y to confirm, anything else cancels:%s\n", cBold, cReset)
-		line, _ := a.editor.ReadLine("> ")
+		line, _ := a.editor.ReadLine("> ", readLineOptions{})
 		if !isYes(line) {
 			a.printf("%sAborted; no data uploaded.%s\n", cDim, cReset)
 			return nil

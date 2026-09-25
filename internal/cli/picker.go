@@ -3,10 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
@@ -88,47 +85,6 @@ func (p *picker) RunMulti() ([]string, bool) {
 	return r.ids, ok && r.confirmed
 }
 
-// cursorRow asks the terminal for the cursor row over the DSR escape
-// sequence. The reply never contains a newline, so the caller must run
-// it with the input already in raw mode; a late or missing reply
-// yields row 0. Reads are bounded by a short deadline so terminals
-// that never answer cannot hang the picker.
-func (p *picker) cursorRow() int {
-	io.WriteString(p.out, "\x1b[6n")
-	deadliner, _ := p.in.(interface {
-		SetReadDeadline(time.Time) error
-	})
-	deadline := time.Now().Add(500 * time.Millisecond)
-	var buf []byte
-	b := make([]byte, 1)
-	for len(buf) < 32 {
-		if deadliner != nil {
-			_ = deadliner.SetReadDeadline(deadline)
-		}
-		n, err := p.in.Read(b)
-		if deadliner != nil {
-			_ = deadliner.SetReadDeadline(time.Time{})
-		}
-		if err != nil || n == 0 {
-			return 0
-		}
-		buf = append(buf, b[0])
-		if b[0] == 'R' {
-			parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(string(buf), "\x1b["), "R"), ";")
-			if len(parts) == 2 {
-				if n, err := strconv.Atoi(parts[0]); err == nil {
-					return n
-				}
-			}
-			return 0
-		}
-		if time.Now().After(deadline) {
-			return 0
-		}
-	}
-	return 0
-}
-
 // RunFull shows the inline picker and blocks until the user confirms
 // or cancels. The panel is anchored near the cursor (moved up first so
 // the bubbletea frame paints over the rows today's panel would occupy)
@@ -181,17 +137,11 @@ func (p *picker) RunFull() (pickResult, bool) {
 // anchorRow returns the terminal row the cursor sits on, or 0 when the
 // DSR reply is unavailable.
 func (p *picker) anchorRow() int {
-	f, ok := p.in.(*os.File)
+	row, ok := queryCursorRow(p.in, p.out)
 	if !ok {
 		return 0
 	}
-	fd := int(f.Fd())
-	old, err := term.MakeRaw(fd)
-	if err != nil {
-		return 0
-	}
-	defer term.Restore(fd, old)
-	return p.cursorRow()
+	return row
 }
 
 func newPickerModel(p *picker, width, height int) *pickerModel {

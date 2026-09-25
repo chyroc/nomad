@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -55,6 +56,7 @@ type Runner struct {
 	cappedFlag   *atomic.Bool
 
 	drainHookContext func() string
+	workerLogger     *log.Logger
 
 	hookMu    sync.Mutex
 	toolHooks toolHookPair
@@ -83,6 +85,7 @@ type RunnerOptions struct {
 	PostToolUse     func(context.Context, string, json.RawMessage, bool) hooks.Outcome
 	ToolTimeout     time.Duration
 	MaxToolTurns    int
+	WorkerLogger    *log.Logger
 }
 
 // NewRunner creates (or attaches to) a session and wires the worker.
@@ -97,6 +100,7 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 	if toolTimeout <= 0 {
 		toolTimeout = 120 * time.Second
 	}
+	workerLogger := o.WorkerLogger
 	perm := o.Permission
 	if perm == "" {
 		perm = PermBypass
@@ -182,6 +186,7 @@ func NewRunner(ctx context.Context, o RunnerOptions) (*Runner, error) {
 		tools:            tools,
 		rules:            rulesHolder,
 		drainHookContext: drainHookContext,
+		workerLogger:     workerLogger,
 		toolHooks:        toolHookPair{pre: o.PreToolUse, post: o.PostToolUse},
 		reasoningEffort:  o.ReasoningEffort,
 		maxToolTurns:     o.MaxToolTurns,

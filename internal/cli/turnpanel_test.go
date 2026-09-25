@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPanelRowsTruncateAndCap(t *testing.T) {
@@ -13,9 +14,10 @@ func TestPanelRowsTruncateAndCap(t *testing.T) {
 	for i := range lines {
 		lines[i] = strings.Repeat("x", 200)
 	}
-	rows := panelRows(lines, "", 80, 24)
-	if len(rows) != panelMaxHeight(24) {
-		t.Fatalf("rows=%d want cap %d", len(rows), panelMaxHeight(24))
+	rows := panelRows(lines, "", 80, 24, 5)
+	wantCap := 24 - 5 - 1
+	if len(rows) != wantCap {
+		t.Fatalf("rows=%d want cap %d", len(rows), wantCap)
 	}
 	for _, r := range rows {
 		if len([]rune(r)) > 78 {
@@ -28,11 +30,11 @@ func TestPanelRowsTruncateAndCap(t *testing.T) {
 }
 
 func TestPanelRowsSpinnerLast(t *testing.T) {
-	rows := panelRows([]string{"a"}, "⠋ bash(ls)", 80, 24)
+	rows := panelRows([]string{"a"}, "⠋ bash(ls)", 80, 24, 5)
 	if len(rows) != 2 || !strings.HasPrefix(rows[1], "⠋ bash") {
 		t.Fatalf("spinner row missing: %v", rows)
 	}
-	if got := panelRows(nil, "", 80, 24); len(got) != 0 {
+	if got := panelRows(nil, "", 80, 24, 5); len(got) != 0 {
 		t.Fatalf("empty panel should have no rows, got %v", got)
 	}
 }
@@ -40,7 +42,8 @@ func TestPanelRowsSpinnerLast(t *testing.T) {
 func TestPanelLifecycleErasesOnFinish(t *testing.T) {
 	var buf bytes.Buffer
 	var mu sync.Mutex
-	p := &turnPanel{out: &lockedWriter{w: &buf, mu: &mu}, color: false}
+	p := &turnPanel{out: &lockedWriter{w: &buf, mu: &mu}, color: false,
+		chrome: []string{"TOP", "❯ ", "BOTTOM", "S1", "S2"}}
 	p.begin("Working…")
 	p.push("● bash ✓ · ok")
 	p.setSpinner("⠿ edit(f.go)")
@@ -52,13 +55,48 @@ func TestPanelLifecycleErasesOnFinish(t *testing.T) {
 	out.Write(buf.Bytes())
 	mu.Unlock()
 	s := out.String()
-	for _, want := range []string{"Working", "bash ✓", "final answer", "Worked for"} {
+	for _, want := range []string{"Working", "bash ✓", "final answer", "Worked for", "BOTTOM", "S1"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("panel output missing %q:\n%q", want, s)
 		}
 	}
 	if n := strings.Count(s, "\x1b[J"); n < 2 {
 		t.Fatalf("panel should erase on printAbove and finish, got %d clears:\n%q", n, s)
+	}
+	afterFinish := strings.SplitAfterN(s, "Worked for 5s · 1 tools\n", 2)
+	if len(afterFinish) == 2 && strings.Contains(afterFinish[1], "S1") {
+		t.Fatalf("docked chrome must be erased on finish:\n%q", afterFinish[1])
+	}
+}
+
+func TestPanelRedrawKeepsChromeBelowDynamicRows(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	p := &turnPanel{out: &lockedWriter{w: &buf, mu: &mu}, color: false,
+		chrome: []string{"TOP", "❯ ", "BOTTOM", "S1", "S2"}}
+	p.begin("Working…")
+	p.push("● read ✓")
+	p.push("● bash ✓")
+
+	mu.Lock()
+	s := buf.String()
+	mu.Unlock()
+	lastUp := strings.LastIndex(s, "\x1b[2K● read")
+	frame := s
+	if i := strings.LastIndex(s[:lastUp], "\x1b["); i >= 0 {
+		frame = s[i:]
+	}
+	order := []string{"● read ✓", "● bash ✓", "TOP", "❯ ", "BOTTOM", "S1", "S2"}
+	prev := -1
+	for _, want := range order {
+		idx := strings.Index(frame, want)
+		if idx < 0 {
+			t.Fatalf("final frame missing %q:\n%q", want, frame)
+		}
+		if idx <= prev {
+			t.Fatalf("%q out of order in final frame:\n%q", want, frame)
+		}
+		prev = idx
 	}
 }
 
@@ -83,4 +121,16 @@ func (l *lockedWriter) Write(b []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(b)
+}
+
+func TestTurnEndLineVerbByToolCount(t *testing.T) {
+	end := time.Date(2026, 9, 25, 9, 56, 0, 0, time.Local)
+	think := turnEndLine(end, 4*time.Second, 0)
+	if !strings.Contains(think, "Cogitated for 4s") || strings.Contains(think, "tools") {
+		t.Fatalf("think-only turn line=%q", think)
+	}
+	worked := turnEndLine(end, 9*time.Second, 2)
+	if !strings.Contains(worked, "Worked for 9s · 2 tools") {
+		t.Fatalf("tool turn line=%q", worked)
+	}
 }

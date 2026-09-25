@@ -22,7 +22,7 @@ func pasteInRawEditor(t *testing.T, writes ...[]byte) string {
 	ed := newLineEditor(slave, slave, nil, "")
 	done := make(chan string, 1)
 	go func() {
-		line, _ := ed.ReadLine("> ")
+		line, _ := ed.ReadLine("> ", readLineOptions{})
 		done <- line
 	}()
 	time.Sleep(200 * time.Millisecond)

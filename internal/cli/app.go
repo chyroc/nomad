@@ -31,6 +31,7 @@ const (
 	cYellow = "\x1b[33m"
 	cRed    = "\x1b[31m"
 	cBold   = "\x1b[1m"
+	cRowBg  = "\x1b[48;5;236m"
 )
 
 // App is the CLI application.
@@ -49,7 +50,10 @@ type App struct {
 
 	editor    *lineEditor
 	panel     *turnPanel
+	bar       *statusBar
 	toolCount int
+
+	turnEndSummary string
 
 	sessionID string
 	runner    loop.Runner
@@ -75,19 +79,22 @@ type App struct {
 	goalEvalFailures int
 	goalRetryDelay   func(attempt int) time.Duration
 
-	thinkingBuf   strings.Builder
-	thinkingStart time.Time
+	thinkingBuf      strings.Builder
+	thinkingStart    time.Time
+	thoughtLineShown bool
+	browseNotes      []string
 
 	modalMu      sync.Mutex
 	modalActive  bool
 	modalPending []func()
 
-	foldMu       sync.Mutex
-	folds        map[int]*foldBlock
-	foldOrder    []int
-	foldSeen     map[int]bool
-	nextFoldID   int
-	pendingTools map[string]pendingTool
+	foldMu        sync.Mutex
+	folds         map[int]*foldBlock
+	foldOrder     []int
+	foldSeen      map[int]bool
+	nextFoldID    int
+	pendingTools  []pendingTool
+	deferredTools []loop.Event
 }
 
 // withModal buffers event rendering while an inline modal (permission
@@ -242,12 +249,36 @@ func (a *App) sessionSystem(ctx context.Context) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (a *App) permMode() ark.PermissionMode {
+// effectivePermissionMode resolves the live permission mode, falling
+// back to the settings default for the current session.
+func (a *App) effectivePermissionMode() string {
 	mode := a.opts.PermissionMode
 	if !a.opts.PermissionModeSet && a.appSettings != nil && a.appSettings.DefaultMode != "" {
 		mode = a.appSettings.DefaultMode
 	}
-	switch mode {
+	return mode
+}
+
+// cyclePermissionMode advances the interactive permission mode and
+// invalidates the runner so the next turn is created under the mode.
+func (a *App) cyclePermissionMode() string {
+	order := []string{"default", "acceptEdits", "plan", "bypassPermissions"}
+	cur := a.effectivePermissionMode()
+	next := order[0]
+	for i, m := range order {
+		if m == cur {
+			next = order[(i+1)%len(order)]
+			break
+		}
+	}
+	a.opts.PermissionMode = next
+	a.opts.PermissionModeSet = true
+	a.closeRunner()
+	return next
+}
+
+func (a *App) permMode() ark.PermissionMode {
+	switch a.effectivePermissionMode() {
 	case "acceptEdits":
 		return ark.PermEdit
 	case "plan":

@@ -14,6 +14,7 @@ const (
 type diffLine struct {
 	kind byte
 	text string
+	no   int
 }
 
 type diffOp struct {
@@ -183,11 +184,11 @@ func hunksFromOps(a, b []string, ops []diffOp) []diffLine {
 		for _, o := range slice {
 			switch o.op {
 			case ' ':
-				out = append(out, diffLine{' ', a[o.ai]})
+				out = append(out, diffLine{' ', a[o.ai], o.ai + 1})
 			case '-':
-				out = append(out, diffLine{'-', a[o.ai]})
+				out = append(out, diffLine{'-', a[o.ai], o.ai + 1})
 			case '+':
-				out = append(out, diffLine{'+', b[o.bi]})
+				out = append(out, diffLine{'+', b[o.bi], o.bi + 1})
 			}
 		}
 		i = stop
@@ -229,25 +230,4 @@ func hunkRange(start, count int) string {
 		return itoa(start)
 	}
 	return itoa(start) + "," + itoa(count)
-}
-
-// toolCallDiffLines renders the colored unified-diff lines for an
-// edit/write call so they can be included in the tool's Ctrl+O fold.
-func toolCallDiffLines(name, argsJSON, workspace string) ([]string, bool) {
-	lines, ok := toolCallDiff(name, argsJSON, workspace)
-	if !ok {
-		return nil, false
-	}
-	rendered := make([]string, len(lines))
-	for i, l := range lines {
-		switch l.kind {
-		case '+':
-			rendered[i] = cGreen + l.text + cReset
-		case '-':
-			rendered[i] = cRed + l.text + cReset
-		default:
-			rendered[i] = cDim + l.text + cReset
-		}
-	}
-	return rendered, true
 }

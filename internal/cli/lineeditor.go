@@ -17,6 +17,14 @@ import (
 // ErrInterrupt reports that the user pressed Ctrl+C while editing.
 var ErrInterrupt = errors.New("interrupt")
 
+// inputFrame is the pinned chrome around the editing row: a top rule
+// printed once above the input, and rows rendered beneath it (bottom
+// rule followed by the two status rows).
+type inputFrame struct {
+	top  string
+	rows []string
+}
+
 // lineEditor reads one logical input line from the terminal. The
 // interactive path runs a short-lived bubbletea program around the
 // bubbles textinput; the non-TTY path falls back to a plain buffered
@@ -32,6 +40,10 @@ type lineEditor struct {
 	saved       string
 	completer   func(line string) []string
 	onFold      func() []string
+
+	renderFrame func(width int) inputFrame
+	onCycleMode func()
+	color       bool
 
 	searching   bool
 	searchQuery []rune
@@ -58,6 +70,10 @@ func newLineEditor(in io.Reader, out io.Writer, history []string, historyPath st
 
 func (e *lineEditor) setCompleter(f func(string) []string) { e.completer = f }
 
+func (e *lineEditor) setFrame(f func(width int) inputFrame) { e.renderFrame = f }
+
+func (e *lineEditor) setCycleMode(f func()) { e.onCycleMode = f }
+
 // History returns the in-memory history entries.
 func (e *lineEditor) History() []string { return e.history }
 
@@ -68,9 +84,21 @@ func (e *lineEditor) width() int {
 	return 80
 }
 
+// readLineOptions controls one interactive ReadLine invocation.
+type readLineOptions struct {
+	showTopRule    bool
+	blankContinues bool
+}
+
 // ReadLine reads one submission. Multi-line bracketed pastes are kept
-// as chips while editing and expanded into the returned text.
-func (e *lineEditor) ReadLine(prompt string) (string, error) {
+// as chips while editing and expanded into the returned text. The top
+// rule is rendered (and left in the scrollback above the echo) only
+// when showTopRule is true; backslash-joined continuation prompts pass
+// false so the frame does not gain a second rule. When blankContinues
+// is true, pressing Enter on an empty line stays inside the editor
+// instead of exiting, so the pinned frame never flickers on an
+// accidental blank submit.
+func (e *lineEditor) ReadLine(prompt string, opts readLineOptions) (string, error) {
 	if e.fd < 0 || !term.IsTerminal(e.fd) {
 		return e.readLinePlain(prompt)
 	}
@@ -79,8 +107,18 @@ func (e *lineEditor) ReadLine(prompt string) (string, error) {
 	ti.Prompt = prompt
 	ti.CharLimit = 0
 	_ = ti.Cursor.SetMode(cursor.CursorStatic)
-	m := &editorModel{ed: e, prompt: prompt, ti: ti, width: e.width()}
+	m := &editorModel{
+		ed:             e,
+		prompt:         prompt,
+		ti:             ti,
+		width:          e.width(),
+		showTopRule:    opts.showTopRule,
+		blankContinues: opts.blankContinues,
+	}
 	m.syncWidth()
+	if e.renderFrame != nil {
+		m.frame = e.renderFrame(m.width)
+	}
 	p := tea.NewProgram(m, tea.WithInput(e.raw), tea.WithOutput(e.out), tea.WithoutSignalHandler())
 	m.prog = p
 	stopRelay := relayResize(p)
@@ -123,8 +161,9 @@ const (
 )
 
 // editorModel is the bubbletea model behind ReadLine's interactive
-// path. It always renders two rows (input plus slash hints) and leaves
-// a final echo of the submission in the scrollback on exit.
+// path. It renders the input plus the slash hint above the pinned
+// bottom block (rule and two status rows) and leaves a final echo of
+// the submission in the scrollback on exit.
 type editorModel struct {
 	ed     *lineEditor
 	prompt string
@@ -133,7 +172,11 @@ type editorModel struct {
 	echo   string
 	status editorStatus
 	width  int
+	frame  inputFrame
 	prog   *tea.Program
+
+	showTopRule    bool
+	blankContinues bool
 }
 
 func (m *editorModel) Init() tea.Cmd {
@@ -145,11 +188,13 @@ func (m *editorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.syncWidth()
+		m.refreshFrame()
 		return m, nil
 	case resizeMsg:
 		if w, _ := cachedTermSize(); w > 0 {
 			m.width = w
 			m.syncWidth()
+			m.refreshFrame()
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -163,10 +208,37 @@ func (m *editorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *editorModel) View() string {
-	if m.status == editorSubmitted {
-		return m.echo + "\n"
+	switch m.status {
+	case editorSubmitted:
+		echo := m.echoRow()
+		if m.showTopRule && m.frame.top != "" {
+			return m.frame.top + "\n" + echo + "\n"
+		}
+		return echo + "\n"
+	case editorInterrupted, editorEOF:
+		return " "
 	}
-	return m.inputRow() + "\n" + m.hintRow()
+	var b strings.Builder
+	if m.showTopRule && m.frame.top != "" {
+		b.WriteString(m.frame.top)
+		b.WriteString("\n")
+	}
+	if hint := m.slashHintRow(); hint != "" {
+		b.WriteString(hint)
+		b.WriteString("\n")
+	}
+	b.WriteString(m.inputRow())
+	for _, row := range m.frame.rows {
+		b.WriteString("\n")
+		b.WriteString(row)
+	}
+	return b.String()
+}
+
+func (m *editorModel) refreshFrame() {
+	if m.ed.renderFrame != nil {
+		m.frame = m.ed.renderFrame(m.width)
+	}
 }
 
 func (m *editorModel) inputRow() string {
@@ -177,7 +249,42 @@ func (m *editorModel) inputRow() string {
 	return row
 }
 
-func (m *editorModel) hintRow() string {
+// echoRow renders the submitted message with a full-row background,
+// the way the message stays highlighted in the transcript above the
+// input. Every physical line (pasted multi-line submissions included)
+// is padded to the frame width so the background fills the row.
+func (m *editorModel) echoRow() string {
+	return highlightMessageRows(ansi.Strip(m.prompt), m.fullText(), m.width, m.ed.color)
+}
+
+// highlightMessageRows renders a sent user message as a full-row
+// highlighted block: the prompt marker stays dim, the body carries the
+// row background and every physical line is padded to width.
+func highlightMessageRows(marker, text string, width int, color bool) string {
+	whole := marker + text
+	if !color {
+		return whole
+	}
+	if width < 4 {
+		width = 80
+	}
+	lines := strings.Split(whole, "\n")
+	for i, line := range lines {
+		if ansi.StringWidthWc(line) > width {
+			line = ansi.TruncateWc(line, width, "")
+		}
+		if i == 0 && strings.HasPrefix(line, marker) {
+			line = cDim + marker + cReset + cRowBg + strings.TrimPrefix(line, marker)
+		} else {
+			line = cRowBg + line
+		}
+		pad := width - ansi.StringWidthWc(line)
+		lines[i] = line + strings.Repeat(" ", max(pad, 0)) + cReset
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *editorModel) slashHintRow() string {
 	hints := slashHints(m.ed.completer, m.displayed())
 	if len(hints) == 0 {
 		return ""
@@ -205,6 +312,10 @@ func (m *editorModel) syncWidth() {
 func (m *editorModel) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch {
 	case msg.Type == tea.KeyEnter || msg.Type == tea.KeyCtrlJ:
+		if m.blankContinues && m.ti.Value() == "" && len(m.pasted) == 0 {
+			m.ti.Reset()
+			return nil, true
+		}
 		full := m.fullText()
 		if len(m.pasted) == 0 {
 			if h := slashUnique(m.ed.completer, strings.TrimSpace(m.ti.Value())); h != "" {
@@ -256,6 +367,12 @@ func (m *editorModel) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			if c := slashComplete(m.ed.completer, m.ti.Value()); c != "" {
 				m.setLine(c)
 			}
+		}
+		return nil, true
+	case msg.Type == tea.KeyShiftTab:
+		if m.ed.onCycleMode != nil {
+			m.ed.onCycleMode()
+			m.refreshFrame()
 		}
 		return nil, true
 	case msg.Type == tea.KeyCtrlU:

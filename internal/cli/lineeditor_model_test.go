@@ -189,8 +189,8 @@ func TestEditorModelTabCompletion(t *testing.T) {
 	if hints := slashHints(complete, m2.displayed()); len(hints) != 2 {
 		t.Fatalf("hints=%v want 2 entries", hints)
 	}
-	if !strings.Contains(m2.hintRow(), "/model") {
-		t.Fatalf("hintRow=%q", m2.hintRow())
+	if !strings.Contains(m2.slashHintRow(), "/model") {
+		t.Fatalf("hintRow=%q", m2.slashHintRow())
 	}
 }
 
@@ -227,13 +227,92 @@ func TestEditorModelCtrlVSwallowed(t *testing.T) {
 
 func TestEditorHeadlessReadLine(t *testing.T) {
 	ed := newLineEditor(strings.NewReader("hello\nworld\n"), io.Discard, nil, "")
-	got, err := ed.ReadLine("> ")
+	got, err := ed.ReadLine("> ", readLineOptions{})
 	if err != nil || got != "hello" {
 		t.Fatalf("ReadLine=%q err=%v", got, err)
 	}
-	got, err = ed.ReadLine("> ")
+	got, err = ed.ReadLine("> ", readLineOptions{})
 	if err != nil || got != "world" {
 		t.Fatalf("ReadLine2=%q err=%v", got, err)
+	}
+}
+
+func TestEditorModelFrameAssembly(t *testing.T) {
+	m := newTestEditorModel(nil)
+	m.frame = inputFrame{top: "TOP", rows: []string{"RULE", "STATUS1", "STATUS2"}}
+	m.typeText("hi")
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("view lines=%d want 4 (input + rule + 2 status): %q", len(lines), view)
+	}
+	if !strings.Contains(lines[0], "hi") {
+		t.Fatalf("first row should be the input row: %q", lines[0])
+	}
+	if lines[1] != "RULE" || lines[2] != "STATUS1" || lines[3] != "STATUS2" {
+		t.Fatalf("pinned rows out of order: %q", view)
+	}
+}
+
+func TestEditorModelFrameAssemblyWithTopRule(t *testing.T) {
+	m := newTestEditorModel(nil)
+	m.showTopRule = true
+	m.frame = inputFrame{top: "TOP", rows: []string{"RULE", "STATUS1", "STATUS2"}}
+	m.typeText("hi")
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("view lines=%d want 5 (top + input + rule + 2 status): %q", len(lines), lines)
+	}
+	if lines[0] != "TOP" {
+		t.Fatalf("first row should be the top rule: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "hi") {
+		t.Fatalf("second row should be the input: %q", lines[1])
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	echoLines := strings.Split(m.View(), "\n")
+	if echoLines[0] != "TOP" || !strings.Contains(echoLines[1], "hi") {
+		t.Fatalf("submitted echo should keep the top rule: %q", echoLines)
+	}
+}
+
+func TestEditorModelHintSitsAboveInput(t *testing.T) {
+	complete := func(line string) []string { return []string{"/help"} }
+	m := newTestEditorModel(nil)
+	m.ed.completer = complete
+	m.frame = inputFrame{rows: []string{"RULE", "S1", "S2"}}
+	m.typeText("/he")
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("view lines=%d want 5 (hint + input + rule + 2 status): %q", len(lines), view)
+	}
+	if !strings.Contains(lines[0], "/help") {
+		t.Fatalf("slash hint should render above input: %q", lines[0])
+	}
+	if lines[1] == "" || !strings.Contains(lines[1], "/he") {
+		t.Fatalf("second row should be the input: %q", lines[1])
+	}
+	if lines[2] != "RULE" || lines[3] != "S1" || lines[4] != "S2" {
+		t.Fatalf("pinned rows out of order: %q", view)
+	}
+}
+
+func TestEditorModelCycleModeRefreshesFrame(t *testing.T) {
+	m := newTestEditorModel(nil)
+	m.frame = inputFrame{rows: []string{"RULE", "old", "mode"}}
+	cycled := false
+	m.ed.renderFrame = func(width int) inputFrame {
+		return inputFrame{rows: []string{"RULE", "new", "mode"}}
+	}
+	m.ed.onCycleMode = func() { cycled = true }
+	m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if !cycled {
+		t.Fatalf("shift+tab should invoke the cycle callback")
+	}
+	lines := strings.Split(m.View(), "\n")
+	if lines[2] != "new" {
+		t.Fatalf("frame should refresh after mode cycle: %q", strings.Join(lines, "\n"))
 	}
 }
 
@@ -241,10 +320,63 @@ func TestEditorHeadlessDoesNotTouchHistory(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/history"
 	ed := newLineEditor(strings.NewReader("first\n"), io.Discard, nil, path)
-	if _, err := ed.ReadLine("> "); err != nil {
+	if _, err := ed.ReadLine("> ", readLineOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if loaded := loadHistory(path); len(loaded) != 0 {
 		t.Fatalf("headless read must not write history, got %v", loaded)
+	}
+}
+
+func TestEditorModelBlankEnterContinuesWhenConfigured(t *testing.T) {
+	m := newTestEditorModel(nil)
+	m.blankContinues = true
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.status != editorEditing {
+		t.Fatalf("blank enter should keep editing, status=%v", m.status)
+	}
+	m.typeText("go")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.status != editorSubmitted {
+		t.Fatalf("non-blank enter should submit, status=%v", m.status)
+	}
+}
+
+func TestEditorModelBlankEnterSubmitsByDefault(t *testing.T) {
+	m := newTestEditorModel(nil)
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.status != editorSubmitted {
+		t.Fatalf("blank enter should submit without blankContinues, status=%v", m.status)
+	}
+}
+
+func TestEditorModelEchoRowFullWidthHighlight(t *testing.T) {
+	ti := textinput.New()
+	ti.Prompt = "> "
+	_ = ti.Focus()
+	m := &editorModel{
+		ed:     &lineEditor{color: true},
+		prompt: "> ",
+		ti:     ti,
+		width:  20,
+	}
+	m.typeText("hello")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	row := m.echoRow()
+	if !strings.Contains(row, cRowBg) {
+		t.Fatalf("echo row should carry the row background: %q", row)
+	}
+	want := cDim + "> " + cReset + cRowBg + "hello" + strings.Repeat(" ", 13) + cReset
+	if row != want {
+		t.Fatalf("echo row=%q want %q", row, want)
+	}
+}
+
+func TestEditorModelEchoRowNoColor(t *testing.T) {
+	m := newTestEditorModel(nil)
+	m.typeText("hello")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.echoRow(); got != "> hello" {
+		t.Fatalf("plain echo row=%q want > hello", got)
 	}
 }

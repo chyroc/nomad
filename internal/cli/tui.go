@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,8 +33,12 @@ func (a *App) runTUI(ctx context.Context) error {
 		io.WriteString(a.out, "\x1b[?2004l")
 	}
 	a.editor = newLineEditor(a.in, a.out, nil, a.paths.HistoryFile())
+	a.editor.color = a.color
 	a.editor.setCompleter(a.completeSlash)
 	a.editor.onFold = a.latestFoldLines
+	a.bar = newStatusBar()
+	a.editor.setFrame(a.renderInputFrame)
+	a.editor.setCycleMode(func() { a.cyclePermissionMode() })
 
 	a.printf("%s◆ Nomad%s · %s · model %s · %s\n",
 		a.style(cBold, ""), cReset, a.style(cGreen, "managed-agents"),
@@ -62,8 +65,6 @@ func (a *App) runTUI(ctx context.Context) error {
 	}
 
 	for {
-		a.printStatusline()
-		a.printf("%s\n", a.modeLine())
 		input, err := a.readInput()
 		if errors.Is(err, errEOF) {
 			a.printf("\n")
@@ -124,16 +125,35 @@ func (a *App) runTUI(ctx context.Context) error {
 	}
 }
 
+// renderInputFrame builds the pinned chrome around one editor
+// invocation: a full-width top rule and the rows beneath the input
+// (bottom rule plus two status rows).
+func (a *App) renderInputFrame(width int) inputFrame {
+	if width < 8 {
+		width = 8
+	}
+	rule := cDim + strings.Repeat("-", width-1) + cReset
+	if !a.color {
+		rule = strings.Repeat("-", width-1)
+	}
+	line1, line2 := a.bar.render(a, width)
+	return inputFrame{top: rule, rows: []string{rule, line1, line2}}
+}
+
 var errEOF = errors.New("eof")
 
 func (a *App) readInput() (string, error) {
 	var input string
 	for {
 		prompt := a.style(cBold, "❯ ")
-		if input != "" {
+		firstLine := input == ""
+		if !firstLine {
 			prompt = a.style(cDim, "… ")
 		}
-		line, err := a.editor.ReadLine(prompt)
+		line, err := a.editor.ReadLine(prompt, readLineOptions{
+			showTopRule:    firstLine,
+			blankContinues: firstLine,
+		})
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return "", errEOF
@@ -199,12 +219,15 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 		return nil
 	}
 
-	a.startActivity("Working…")
+	a.startActivity("")
 	a.lastAnswer = ""
 	a.assistantStreamed = false
 	a.answerAnchorPrinted = false
+	a.thoughtLineShown = false
+	a.browseNotes = nil
 	a.thinkingBuf.Reset()
 	a.thinkingStart = time.Time{}
+	a.turnEndSummary = ""
 	a.setToolCount(0)
 	turnCtx, cancel := context.WithCancel(ctx)
 	a.turnMu.Lock()
@@ -218,7 +241,9 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 	a.turnMu.Lock()
 	a.turnCancel = nil
 	a.turnMu.Unlock()
-	a.endTurnPanel("")
+	summary := a.turnEndSummary
+	a.turnEndSummary = ""
+	a.endTurnPanel(summary)
 	if err == nil {
 		a.printf("\n")
 	}
@@ -255,19 +280,25 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 	switch ev.Kind {
 	case loop.EvAssistantThinking:
 		if a.thinkingStart.IsZero() {
-			a.thinkingStart = time.Now()
+			a.thinkingStart = ev.Time
+			if a.thinkingStart.IsZero() {
+				a.thinkingStart = time.Now()
+			}
 		}
 		a.thinkingBuf.WriteString(strings.TrimSpace(ev.Content))
 		a.thinkingBuf.WriteByte('\n')
-		a.setActivity(a.style(cPurple, "✻") + " " + a.style(cDim, "Thinking…"))
+		a.setSpinnerPhase(phaseThinking)
 	case loop.EvAssistantChunk:
 		a.lastAnswer += ev.Content
 		a.assistantStreamed = true
+		a.feedStreamedChars(len([]rune(ev.Content)))
 		a.flushThinking()
+		a.ensureThoughtLine()
 		a.finishActivity("")
 		a.renderAnswer(ev.Content)
 	case loop.EvAssistantMessage:
 		a.flushThinking()
+		a.ensureThoughtLine()
 		a.finishActivity("")
 		if a.assistantStreamed {
 			// Already rendered from the chunk event; the two events
@@ -276,22 +307,30 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 		}
 		a.renderAnswer(ev.Content)
 	case loop.EvToolCall:
-		a.flushThinking()
-		a.finishActivity("")
+		if ev.ToolCall != nil && !isBrowseTool(ev.ToolCall.Name) && webToolKind(ev.ToolCall.Name) == "" {
+			a.flushThinking()
+		}
 		if ev.ToolCall != nil {
 			a.rememberToolCall(ev.ToolCall, ev.Time)
-			a.startActivity(toolRunningLabel(ev.ToolCall.Name, ev.ToolCall.Arguments))
+			if webToolKind(ev.ToolCall.Name) == "" {
+				a.startToolSpinner(ev.ToolCall.Name, ev.ToolCall.Arguments)
+			}
 		}
 	case loop.EvToolResult:
 		a.finishTool(ev)
+	case loop.EvUsage:
+		if ev.Usage != nil {
+			a.setSpinnerOutput(ev.Usage.OutputTokens)
+		}
 	case loop.EvTurnEnd:
+		a.flushDeferredToolResults()
 		a.flushThinking()
-		a.finishActivity("")
+		a.collapseTurnPanel()
 		line := turnEndLine(time.Now(), a.elapsedTurn(), a.toolStepCount())
 		if ev.Usage != nil && a.opts.Verbose {
 			line += a.style(cDim, fmt.Sprintf(" · ↑%d ↓%d tokens", ev.Usage.InputTokens, ev.Usage.OutputTokens))
 		}
-		a.endTurnPanel(line)
+		a.turnEndSummary = line
 		go a.runStopHooks(context.Background(), a.sessionID)
 	case loop.EvError:
 		a.finishActivity("")
@@ -300,31 +339,78 @@ func (a *App) renderInteractiveEvent(ev loop.Event) {
 	}
 }
 
+// stripFirstLineMargin removes the glamour document indentation
+// (two columns) from only the first rendered line, which may begin
+// with SGR sequences. Continuation lines keep the indent so the body
+// aligns under the first line's text.
+func stripFirstLineMargin(s string) string {
+	i := 0
+	for i < len(s) {
+		switch s[i] {
+		case '\n', '\r':
+			i++
+			continue
+		case 0x1b:
+			j := i + 2
+			for j < len(s) {
+				c := s[j]
+				j++
+				if c >= 0x40 && c <= 0x7e {
+					break
+				}
+			}
+			i = j
+			continue
+		}
+		break
+	}
+	return s[:i] + strings.TrimPrefix(s[i:], "  ")
+}
+
 // renderAnswer prints an assistant text block (markdown when a TTY).
 func (a *App) renderAnswer(text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
-	anchor := ""
-	if !a.answerAnchorPrinted {
-		anchor = a.style(cPurple, "● ") + cReset
+	first := !a.answerAnchorPrinted
+	if first {
 		a.answerAnchorPrinted = true
 	}
 	if a.color {
 		width, _ := cachedTermSize()
-		rendered := strings.TrimLeft(renderMarkdown(text, width, true), "\n")
-		a.printf("%s%s", anchor, rendered)
+		rendered := strings.TrimLeft(renderMarkdown(text, width-1, true), "\n")
+		if first {
+			rendered = stripFirstLineMargin(rendered)
+			a.printf("%s %s", a.style(cPurple, "●"), rendered)
+			return
+		}
+		a.printf("%s", rendered)
 		return
 	}
-	a.printf("%s%s\n\n", anchor, text)
+	if first {
+		a.printf("%s %s\n\n", a.style(cPurple, "●"), text)
+		return
+	}
+	a.printf("%s\n\n", text)
 }
 
-// startActivity opens the turn's live progress region.
+// dockChromeRows builds the rows kept pinned at the bottom while a
+// turn runs: top rule, the static empty input row, bottom rule and the
+// two status rows.
+func (a *App) dockChromeRows(width int) []string {
+	f := a.renderInputFrame(width)
+	input := a.style(cBold, "❯ ")
+	return append([]string{f.top, input}, f.rows...)
+}
+
+// startActivity opens the turn's live progress region above the
+// docked input chrome with the dynamic phased spinner.
 func (a *App) startActivity(label string) {
 	if a.panel == nil {
 		a.panel = newTurnPanel(a.out, a.color)
 	}
+	a.panel.setChrome(a.dockChromeRows)
 	a.panel.begin(label)
 }
 
@@ -336,10 +422,42 @@ func (a *App) setActivity(label string) {
 	a.panel.setSpinner(label)
 }
 
-// finishActivity clears the spinner but keeps the progress region.
-func (a *App) finishActivity(string) {
+// setSpinnerPhase switches the dynamic spinner phase.
+func (a *App) setSpinnerPhase(phase spinnerPhase) {
+	if a.panel == nil {
+		a.startActivity("")
+		return
+	}
+	a.panel.setPhase(phase)
+}
+
+// startToolSpinner shows a static gerund for browsing tools and the
+// dynamic working phase for everything else.
+func (a *App) startToolSpinner(name, args string) {
+	if isBrowseTool(name) {
+		a.setActivity(runningLabel(name, args))
+		return
+	}
+	a.setSpinnerPhase(phaseWorking)
+}
+
+func (a *App) setSpinnerOutput(n int) {
 	if a.panel != nil {
-		a.panel.setSpinner("")
+		a.panel.setOutputTokens(n)
+	}
+}
+
+func (a *App) feedStreamedChars(n int) {
+	if a.panel != nil {
+		a.panel.addStreamedChars(n)
+	}
+}
+
+// finishActivity drops a pinned static label and returns to the
+// dynamic working spinner; it never hides the spinner mid-turn.
+func (a *App) finishActivity(string) {
+	if a.panel != nil && a.panel.isPinned() {
+		a.panel.setPhase(phaseWorking)
 	}
 }
 
@@ -348,6 +466,14 @@ func (a *App) finishActivity(string) {
 func (a *App) endTurnPanel(final string) {
 	if a.panel != nil {
 		a.panel.finish(final)
+	}
+}
+
+// collapseTurnPanel drops the spinner and tool rows while leaving the
+// docked input chrome on screen during the end_turn grace window.
+func (a *App) collapseTurnPanel() {
+	if a.panel != nil {
+		a.panel.collapseDynamic()
 	}
 }
 
@@ -362,14 +488,16 @@ func (a *App) pushPanel(line string) {
 }
 
 // toolRunningLabel renders the spinner label for an in-flight tool
-// call: tool name plus a short argument preview.
+// call: a gerund phrase for browsing actions, name plus short args
+// otherwise.
 func toolRunningLabel(name, arguments string) string {
-	return "⠿ " + name + " " + toolInvocation(name, arguments, 40)
+	return "⠿ " + runningLabel(name, arguments)
 }
 
 // pendingTool remembers one in-flight call so its result line can show
 // the arguments and the elapsed time.
 type pendingTool struct {
+	id    string
 	name  string
 	args  string
 	start time.Time
@@ -377,7 +505,8 @@ type pendingTool struct {
 
 // rememberToolCall records a call for the matching result event. The
 // start time comes from the event so replayed transcripts measure the
-// original duration.
+// original duration. Calls are kept in arrival order because the
+// managed-agents server emits server-side tool calls with empty ids.
 func (a *App) rememberToolCall(call *loop.ToolCall, at time.Time) {
 	if call == nil {
 		return
@@ -386,133 +515,230 @@ func (a *App) rememberToolCall(call *loop.ToolCall, at time.Time) {
 		at = time.Now()
 	}
 	a.foldMu.Lock()
-	defer a.foldMu.Unlock()
-	if a.pendingTools == nil {
-		a.pendingTools = map[string]pendingTool{}
-	}
 	if len(a.pendingTools) > 64 {
-		a.pendingTools = map[string]pendingTool{}
+		a.pendingTools = nil
 	}
-	a.pendingTools[call.ID] = pendingTool{name: call.Name, args: call.Arguments, start: at}
+	a.pendingTools = append(a.pendingTools, pendingTool{id: call.ID, name: call.Name, args: call.Arguments, start: at})
+	a.foldMu.Unlock()
+	a.reconcileDeferredTools()
 }
 
-// takeToolCall removes and returns the pending call for a result event.
-func (a *App) takeToolCall(id string) pendingTool {
+// reconcileDeferredTools settles results that were processed before
+// their own tool_use event arrived. The pump's result channel races
+// the event stream, so a fast server-side result can render-arrive
+// milliseconds before the call that owns it.
+func (a *App) reconcileDeferredTools() {
+	for {
+		ev, call, ok := a.nextDeferredPair()
+		if !ok {
+			return
+		}
+		a.settleToolCall(call, ev)
+	}
+}
+
+// nextDeferredPair pops the earliest deferred result whose tool call
+// has arrived, together with the oldest pending call of that name.
+func (a *App) nextDeferredPair() (loop.Event, pendingTool, bool) {
 	a.foldMu.Lock()
 	defer a.foldMu.Unlock()
-	call := a.pendingTools[id]
-	delete(a.pendingTools, id)
+	for i, ev := range a.deferredTools {
+		name := ev.ToolName
+		if name == "" && ev.ToolCall != nil {
+			name = ev.ToolCall.Name
+		}
+		if name == "" {
+			continue
+		}
+		for j, c := range a.pendingTools {
+			if c.name != name {
+				continue
+			}
+			a.deferredTools = append(a.deferredTools[:i], a.deferredTools[i+1:]...)
+			a.pendingTools = append(a.pendingTools[:j], a.pendingTools[j+1:]...)
+			return ev, c, true
+		}
+	}
+	return loop.Event{}, pendingTool{}, false
+}
+
+// flushDeferredToolResults settles results whose call never arrived
+// before the turn ends, so no block is silently dropped.
+func (a *App) flushDeferredToolResults() {
+	a.foldMu.Lock()
+	evs := a.deferredTools
+	a.deferredTools = nil
+	a.foldMu.Unlock()
+	for _, ev := range evs {
+		a.settleToolCall(pendingTool{}, ev)
+	}
+}
+
+// takeToolCall removes and returns the pending call for a result event,
+// matching by call id first and falling back to the oldest pending call
+// with the same tool name when the call carried no id.
+func (a *App) takeToolCall(id, name string) pendingTool {
+	a.foldMu.Lock()
+	defer a.foldMu.Unlock()
+	idx := -1
+	if id != "" {
+		for i, c := range a.pendingTools {
+			if c.id == id {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 && name != "" {
+		for i, c := range a.pendingTools {
+			if c.name == name {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 {
+		return pendingTool{}
+	}
+	call := a.pendingTools[idx]
+	a.pendingTools = append(a.pendingTools[:idx], a.pendingTools[idx+1:]...)
 	return call
 }
 
-// toolResultSummary builds the one-line result digest for a tool step.
-func toolResultSummary(name, args, result string) string {
-	var parsed map[string]any
-	if args != "" {
-		_ = json.Unmarshal([]byte(args), &parsed)
-	}
-	str := func(k string) string { v, _ := parsed[k].(string); return v }
-	switch name {
-	case "write":
-		path := str("file_path")
-		if path == "" {
-			path = str("path")
-		}
-		if n := strings.Count(str("content"), "\n") + 1; path != "" {
-			return fmt.Sprintf("Wrote %d lines to %s", n, path)
-		}
-	case "edit":
-		path := str("file_path")
-		if path == "" {
-			path = str("path")
-		}
-		added := strings.Count(str("new_string"), "\n") + 1
-		removed := strings.Count(str("old_string"), "\n") + 1
-		if path != "" {
-			return fmt.Sprintf("Added %d lines, removed %d lines", added, removed)
-		}
-	}
-	first := strings.TrimSpace(strings.Split(strings.TrimSpace(result), "\n")[0])
-	if first == "" {
-		return "(No output)"
-	}
-	r := []rune(first)
-	if len(r) > 72 {
-		return string(r[:72]) + "…"
-	}
-	return first
-}
-
-// renderThinkingFold registers one reasoning block as a fold and adds
-// its transient summary line to the live region.
+// renderThinkingFold registers one reasoning block as a fold and
+// prints its collapsed summary as a permanent line above the answer.
 func (a *App) renderThinkingFold(lines []string, started time.Time) {
 	if len(lines) == 0 {
 		return
 	}
 	a.registerFold("reasoning", lines)
+	a.printThoughtLine(started)
+}
+
+// printThoughtLine emits the permanent "Thought for Ns" block once
+// per turn: a blank separator, an indented dim line aligned with the
+// answer body, and a trailing blank line before the answer.
+func (a *App) printThoughtLine(started time.Time) {
+	if a.thoughtLineShown {
+		return
+	}
 	clause := ""
 	if !started.IsZero() {
 		clause = " for " + formatThoughtDuration(time.Since(started))
 	}
-	a.pushPanel(a.style(cDim, "Thought"+clause) + a.style(cDim, " (ctrl+o to expand)"))
+	note := ""
+	if len(a.browseNotes) > 0 {
+		note = ", " + strings.Join(a.browseNotes, ", ")
+	}
+	a.printf("\n%s  Thought%s%s (ctrl+o to expand)%s\n\n", cDim, clause, note, cReset)
+	a.thoughtLineShown = true
 }
 
-// turnEndLine renders the post-turn summary line, including the number
-// of tool steps whose details were erased with the live region.
+// ensureThoughtLine makes sure every answered turn carries at least
+// one permanent Thought line even when the server sent no reasoning
+// block; its duration falls back to the elapsed turn time.
+func (a *App) ensureThoughtLine() {
+	if a.thoughtLineShown {
+		return
+	}
+	a.printThoughtLine(a.turnStart)
+}
+
+// turnEndLine renders the post-turn summary line, including the
+// number of tool steps whose details were erased with the live
+// region. A think-only turn "cogitated"; a turn that ran tools
+// "worked".
 func turnEndLine(end time.Time, elapsed time.Duration, tools int) string {
+	verb := "Cogitated"
 	toolPart := ""
 	if tools > 0 {
+		verb = "Worked"
 		toolPart = fmt.Sprintf(" · %d tools", tools)
 	}
-	return fmt.Sprintf("%s✻ Worked for %s%s · done %s%s",
-		cDim, formatThoughtDuration(elapsed), toolPart, end.Format("3:04 PM"), cReset)
+	return fmt.Sprintf("%s✻ %s for %s%s · done %s%s",
+		cDim, verb, formatThoughtDuration(elapsed), toolPart, end.Format("3:04 PM"), cReset)
 }
 
-// completeToolStep resolves one tool result into its transient summary
-// line and its expandable fold, counting the step. The line is not
-// printed; callers route it to the live region or drop it.
-func (a *App) completeToolStep(ev loop.Event) string {
+// finishTool settles one completed tool call: browsing actions fold
+// into the next Thought line, everything else prints its permanent
+// block above the live region. Results that arrive before their call
+// event are deferred until the call shows up.
+func (a *App) finishTool(ev loop.Event) {
+	call := a.takeToolCallForEvent(ev)
+	if call.name == "" {
+		a.foldMu.Lock()
+		if len(a.deferredTools) > 64 {
+			a.deferredTools = nil
+		}
+		a.deferredTools = append(a.deferredTools, ev)
+		a.foldMu.Unlock()
+		return
+	}
+	a.settleToolCall(call, ev)
+}
+
+// takeToolCallForEvent pulls the remembered call metadata for a
+// result event, matching by call id first and by tool name second.
+func (a *App) takeToolCallForEvent(ev loop.Event) pendingTool {
 	name := ev.ToolName
-	if name == "" {
-		name = "tool"
+	if ev.ToolCall != nil && ev.ToolCall.Name != "" {
+		name = ev.ToolCall.Name
 	}
 	callID := ""
 	if ev.ToolCall != nil {
 		callID = ev.ToolCall.ID
 	}
-	call := a.takeToolCall(callID)
+	return a.takeToolCall(callID, name)
+}
+
+// settleToolCall renders one completed call into its permanent block.
+func (a *App) settleToolCall(call pendingTool, ev loop.Event) {
+	name := ev.ToolName
+	if name == "" {
+		name = "tool"
+	}
 	if call.name != "" {
 		name = call.name
 	}
-	summary := toolResultSummary(name, call.args, ev.Result)
-	body := strings.TrimSpace(ev.Result)
-	if body == "" {
-		body = "(No output)"
+	if isBrowseTool(name) {
+		a.finishActivity("")
+		a.addBrowseNote(name, ev.Result)
+		return
 	}
-	fold := strings.Split(body, "\n")
-	if diff, ok := toolCallDiffLines(name, call.args, a.paths.Workspace); ok {
-		fold = append(fold, diff...)
+	if webToolKind(name) == "" {
+		a.finishActivity("")
 	}
-
-	line := fmt.Sprintf("● %s%s %s · %s", a.style(cBold, name),
-		toolInvocation(name, call.args, 40), toolStatusMark(ev.IsError, call.start, ev.Time), summary)
-	if !isTinyResult(fold) {
-		a.registerFold(name, fold)
-		line += a.style(cDim, " (ctrl+o to expand)")
-	}
-	if ev.IsError {
-		line = cRed + line + cReset
+	block := a.buildToolBlock(name, call.args, ev.Result, ev.IsError, call.start, ev.Time)
+	if len(block.fold) > 0 {
+		a.registerFold(name, block.fold)
 	}
 	a.addToolCount(1)
-	return line
+	a.printToolBlock(block)
 }
 
-// finishTool renders one completed tool step into the live region,
-// e.g. "● bash(go test) ✓ 3s · 12 lines"; the invocation, diff and
-// full output stay available through the Ctrl+O fold.
-func (a *App) finishTool(ev loop.Event) {
-	a.finishActivity("")
-	a.pushPanel(a.completeToolStep(ev))
+// printToolBlock writes the header, ⎿ row and preview above the live
+// region (or straight through when no panel is active).
+func (a *App) printToolBlock(b toolBlock) {
+	var sb strings.Builder
+	sb.WriteString(b.header)
+	sb.WriteString("\n")
+	for _, l := range b.lines {
+		sb.WriteString(l)
+		sb.WriteString("\n")
+	}
+	a.printf("%s", sb.String())
+}
+
+// addBrowseNote records a one-line summary of a browsing action so it
+// can be appended to the surrounding Thought line.
+func (a *App) addBrowseNote(name, result string) {
+	note := browseSummary(name, result)
+	if note == "" {
+		return
+	}
+	a.foldMu.Lock()
+	a.browseNotes = append(a.browseNotes, note)
+	a.foldMu.Unlock()
 }
 
 func (a *App) setToolCount(n int) {
@@ -531,31 +757,6 @@ func (a *App) toolStepCount() int {
 	a.foldMu.Lock()
 	defer a.foldMu.Unlock()
 	return a.toolCount
-}
-
-// toolStatusMark renders the ✓/✗ marker with the elapsed time when the
-// call ran for at least a second.
-func toolStatusMark(isErr bool, start, end time.Time) string {
-	mark, color := "✓", cGreen
-	if isErr {
-		mark, color = "✗", cRed
-	}
-	out := color + mark + cReset
-	if !start.IsZero() && !end.IsZero() {
-		if d := end.Sub(start); d >= time.Second {
-			out += cDim + " " + formatThoughtDuration(d) + cReset
-		}
-	}
-	return out
-}
-
-// isTinyResult reports whether a result is short enough to skip the
-// fold entirely: a single trimmed line under 80 columns with no diff.
-func isTinyResult(lines []string) bool {
-	if len(lines) != 1 {
-		return false
-	}
-	return len([]rune(strings.TrimSpace(lines[0]))) <= 80
 }
 
 // renderFoldable prints an indented body, collapsing long output into a
@@ -648,29 +849,94 @@ func (a *App) latestFoldLines() []string {
 	return a.foldLines(id)
 }
 
-// replay reprints a stored transcript. Ended turns keep only their
-// question, answer and summary line: tool steps and thoughts are
-// transient by design, so replaying them registers their folds for
-// Ctrl+O without printing the per-step lines.
+// replay reprints a stored transcript with the same permanent blocks
+// the live UI produces: highlighted user messages, the Thought line,
+// tool blocks (with Ctrl+O folds), the answer and the summary.
 func (a *App) replay(evs []loop.Event) {
-	var turnStart time.Time
+	var turnStart, thoughtStart time.Time
+	var thoughtBuf strings.Builder
+	var browseNotes []string
+	thoughtShown := false
+	flushReplayThought := func(end time.Time) {
+		if thoughtShown {
+			return
+		}
+		body := strings.Split(strings.TrimSpace(thoughtBuf.String()), "\n")
+		if len(body) == 1 && body[0] == "" {
+			body = nil
+		}
+		if len(body) > 0 {
+			a.registerFold("reasoning", body)
+		}
+		started := thoughtStart
+		if started.IsZero() {
+			started = turnStart
+		}
+		note := ""
+		if len(browseNotes) > 0 {
+			note = ", " + strings.Join(browseNotes, ", ")
+		}
+		if !end.IsZero() && !started.IsZero() {
+			a.printf("\n%s  Thought for %s%s (ctrl+o to expand)%s\n\n",
+				cDim, formatThoughtDuration(end.Sub(started)), note, cReset)
+		} else {
+			a.printf("\n%s  Thought%s (ctrl+o to expand)%s\n\n", cDim, note, cReset)
+		}
+		thoughtShown = true
+	}
 	for _, ev := range evs {
 		switch ev.Kind {
 		case loop.EvUserMessage:
 			turnStart = ev.Time
+			thoughtStart = time.Time{}
+			thoughtBuf.Reset()
+			browseNotes = nil
+			thoughtShown = false
 			a.setToolCount(0)
-			a.printf("%s %s\n", a.style(cBold, "❯"), ev.Content)
+			width, _ := cachedTermSize()
+			a.printf("%s\n", highlightMessageRows("❯ ", ev.Content, width, a.color))
+		case loop.EvAssistantThinking:
+			if thoughtStart.IsZero() {
+				thoughtStart = ev.Time
+			}
+			thoughtBuf.WriteString(strings.TrimSpace(ev.Content))
+			thoughtBuf.WriteByte('\n')
 		case loop.EvAssistantChunk:
 		case loop.EvAssistantMessage:
 			if strings.TrimSpace(ev.Content) != "" {
+				flushReplayThought(ev.Time)
 				a.answerAnchorPrinted = false
 				a.renderAnswer(ev.Content)
 			}
 		case loop.EvToolCall:
 			a.rememberToolCall(ev.ToolCall, ev.Time)
 		case loop.EvToolResult:
-			a.completeToolStep(ev)
+			call := a.takeToolCallForEvent(ev)
+			if call.name == "" {
+				a.foldMu.Lock()
+				a.deferredTools = append(a.deferredTools, ev)
+				a.foldMu.Unlock()
+				continue
+			}
+			name := ev.ToolName
+			if call.name != "" {
+				name = call.name
+			}
+			if isBrowseTool(name) {
+				if n := browseSummary(name, ev.Result); n != "" {
+					browseNotes = append(browseNotes, n)
+				}
+			} else {
+				block := a.buildToolBlock(name, call.args, ev.Result, ev.IsError, call.start, ev.Time)
+				if len(block.fold) > 0 {
+					a.registerFold(name, block.fold)
+				}
+				a.addToolCount(1)
+				a.printToolBlock(block)
+			}
 		case loop.EvTurnEnd:
+			a.flushDeferredToolResults()
+			flushReplayThought(ev.Time)
 			if !ev.Time.IsZero() {
 				elapsed := time.Duration(0)
 				if !turnStart.IsZero() {

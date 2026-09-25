@@ -25,6 +25,7 @@ const (
 	EvToolResult        = "tool_result"
 	EvTurnEnd           = "turn_end"
 	EvError             = "error"
+	EvUsage             = "usage"
 )
 
 // ToolCall references one tool invocation by the model.
