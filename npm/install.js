@@ -26,6 +26,19 @@ function log(msg) {
   console.log("[nomad] " + msg);
 }
 
+function describeError(err) {
+  let cause = err;
+  while (cause && Array.isArray(cause.errors) && cause.errors.length > 0) {
+    cause = cause.errors[0];
+  }
+  const text = String(
+    (cause && (cause.message || cause.code)) || err || "unknown error"
+  );
+  const code = cause && cause.code;
+  if (code && !text.includes(code)) return code + ": " + text;
+  return text;
+}
+
 function get(url, redirectsLeft) {
   const client = url.startsWith("https:") ? httpx : http;
   return new Promise((resolve, reject) => {
@@ -82,7 +95,14 @@ async function main() {
   const destBin = path.join(dest, binaryName());
 
   log("fetching " + archiveName);
-  const gz = await get(url, 5);
+  let gz;
+  try {
+    gz = await get(url, 5);
+  } catch (e) {
+    throw new Error(
+      "cannot download " + url + " (" + describeError(e) + ")"
+    );
+  }
   untarGz(gz, dest);
 
   let produced = destBin;
@@ -111,9 +131,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[nomad] install failed: " + err.message);
+  console.error("[nomad] install failed: " + describeError(err));
   console.error(
-    "[nomad] build from source instead: go install github.com/chyroc/nomad/cmd/nomad@latest"
+    "[nomad] set NOMAD_DOWNLOAD_BASE_URL to a reachable mirror, or build from source: go install github.com/chyroc/nomad/cmd/nomad@latest"
   );
   process.exit(1);
 });

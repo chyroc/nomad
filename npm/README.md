@@ -16,6 +16,11 @@ npx @chyroc/nomad
 
 Supported platforms: macOS / Linux / FreeBSD on x64 and arm64.
 
+`postinstall` downloads the archive from `github.com`. On networks that
+block the GitHub release host, set `NOMAD_DOWNLOAD_BASE_URL` to a mirror
+serving the same `nomad_<version>_<os>_<arch>.tar.gz` layout, or install
+from source with `go install github.com/chyroc/nomad/cmd/nomad@latest`.
+
 ## Usage
 
 ```bash
