@@ -57,3 +57,34 @@ func TestExportJSONL(t *testing.T) {
 		t.Fatalf("jsonl export wrong: %s", buf.String())
 	}
 }
+
+func TestMetaRoundTripAndList(t *testing.T) {
+	s, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append("sess-a", loop.Event{Kind: loop.EvUserMessage, Content: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveMeta("sess-a", Meta{Workspace: "/ws/a", Model: "m1"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.LoadMeta("sess-a")
+	if err != nil || first.Workspace != "/ws/a" || first.CreatedAt.IsZero() {
+		t.Fatalf("meta = %+v, %v", first, err)
+	}
+	if err := s.SaveMeta("sess-a", Meta{Workspace: "/ws/a", Model: "m2"}); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := s.LoadMeta("sess-a")
+	if !second.CreatedAt.Equal(first.CreatedAt) || second.Model != "m2" {
+		t.Fatalf("meta not merged: %+v", second)
+	}
+	recs, err := s.List()
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("list = %+v, %v", recs, err)
+	}
+	if recs[0].Workspace != "/ws/a" || recs[0].Title != "first" {
+		t.Fatalf("record = %+v", recs[0])
+	}
+}

@@ -36,6 +36,7 @@ func (a *App) runHeadless(ctx context.Context) error {
 	a.sessionID = runner.SessionID()
 	a.installToolHooks(runner)
 	if resumeID == "" {
+		a.recordSessionMeta(transcript)
 		var ok bool
 		prompt, ok = a.runSessionStartHook(ctx, a.sessionID, prompt)
 		if !ok {
@@ -188,6 +189,15 @@ func (a *App) newRunner(ctx context.Context, remoteSessionID string, ask func(st
 		opts.WorkerLogger = log.New(f, "", log.LstdFlags)
 	}
 	return a.ctrl.NewRunner(ctx, opts)
+}
+
+// recordSessionMeta stores the workspace and model of a new session so
+// session browsers can group it by project.
+func (a *App) recordSessionMeta(transcript *store.SessionStore) {
+	if transcript == nil || a.sessionID == "" {
+		return
+	}
+	_ = transcript.SaveMeta(a.sessionID, store.Meta{Workspace: a.paths.Workspace, Model: a.model})
 }
 
 // resumeSessionID resolves --resume/--continue to a remote session id.

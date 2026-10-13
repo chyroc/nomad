@@ -75,7 +75,51 @@ func (s *SessionStore) Load(id string) ([]loop.Event, error) {
 type SessionRecord struct {
 	ID        string
 	Title     string
+	Workspace string
 	UpdatedAt time.Time
+}
+
+// Meta is the sidecar metadata of a session transcript.
+type Meta struct {
+	Workspace string    `json:"workspace,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+}
+
+// SaveMeta writes the sidecar metadata of a session, keeping an
+// existing creation time.
+func (s *SessionStore) SaveMeta(id string, m Meta) error {
+	if old, err := s.LoadMeta(id); err == nil && !old.CreatedAt.IsZero() {
+		m.CreatedAt = old.CreatedAt
+	}
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = time.Now()
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	path := s.metaPath(id)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("store: write meta: %w", err)
+	}
+	return os.Rename(tmp, path)
+}
+
+// LoadMeta reads the sidecar metadata of a session.
+func (s *SessionStore) LoadMeta(id string) (Meta, error) {
+	var m Meta
+	data, err := os.ReadFile(s.metaPath(id))
+	if err != nil {
+		return m, err
+	}
+	err = json.Unmarshal(data, &m)
+	return m, err
+}
+
+func (s *SessionStore) metaPath(id string) string {
+	return filepath.Join(s.dir, filepath.Base(id)+".meta.json")
 }
 
 // List returns existing transcripts, newest first.
@@ -103,7 +147,11 @@ func (s *SessionStore) List() ([]SessionRecord, error) {
 				}
 			}
 		}
-		out = append(out, SessionRecord{ID: id, Title: title, UpdatedAt: info.ModTime()})
+		rec := SessionRecord{ID: id, Title: title, UpdatedAt: info.ModTime()}
+		if m, err := s.LoadMeta(id); err == nil {
+			rec.Workspace = m.Workspace
+		}
+		out = append(out, rec)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
 	return out, nil

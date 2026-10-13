@@ -205,6 +205,7 @@ func (a *App) turn(ctx context.Context, transcript *store.SessionStore, text str
 		}
 		a.setRunner(runner)
 		a.sessionID = runner.SessionID()
+		a.recordSessionMeta(transcript)
 		a.installToolHooks(runner)
 		var started bool
 		text, started = a.runSessionStartHook(ctx, a.sessionID, text)

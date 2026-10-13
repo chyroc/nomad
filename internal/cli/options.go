@@ -145,7 +145,7 @@ func ParseOptions(argv []string) (Options, error) {
 		arg := argv[i]
 		switch {
 		case !strings.HasPrefix(arg, "-") || arg == "-":
-			if o.Subcommand == "" && (arg == "login" || arg == "logout" || arg == "web-server") {
+			if o.Subcommand == "" && (arg == "login" || arg == "logout" || arg == "web-server" || arg == "app-server") {
 				o.Subcommand = arg
 			} else {
 				o.PromptArgs = append(o.PromptArgs, arg)
@@ -259,6 +259,8 @@ CORE OPTIONS
 SUBCOMMANDS
   nomad web-server [--web-host h]  run the shared web server (normally started
                                     automatically; one per machine, one port)
+  nomad app-server                 serve sessions as JSON-RPC over stdio (used by
+                                    the macOS app)
 
 TUI COMMANDS
   /help /clear /model /effort /status /diff /export /cost /resume /sessions
