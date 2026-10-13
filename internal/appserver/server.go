@@ -498,7 +498,7 @@ func (s *Server) runTurn(ctx context.Context, th *thread, runner loop.Runner, te
 	params := map[string]any{"threadId": id}
 	switch {
 	case err == nil:
-	case errors.Is(err, context.Canceled):
+	case errors.Is(err, context.Canceled), errors.Is(err, ark.ErrInterrupted):
 		params["interrupted"] = true
 	default:
 		params["error"] = err.Error()

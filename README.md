@@ -61,6 +61,27 @@ On first run nomad:
 3. lists `/models`, selects a tool-calling chat model, and opens a
    managed-agents session.
 
+## macOS app
+
+`macos/` holds a native SwiftUI desktop client modeled on the Codex
+desktop app: projects and threads in the sidebar, a home screen with
+suggestions, streamed conversations with collapsible work logs, inline
+tool approvals, model/effort and permission pickers, and in-app login.
+
+```bash
+make app                  # -> macos/build/Nomad.app (embeds the nomad CLI)
+open macos/build/Nomad.app
+make app-test             # Swift unit tests + a real app-server round trip
+make app-snapshot         # offscreen PNGs of every screen in bin/snapshots
+```
+
+The app spawns `nomad app-server`, a newline-delimited JSON-RPC 2.0
+server over stdio (`initialize`, `thread/list`, `thread/read`,
+`turn/start`, `turn/interrupt`, `models/list`, `auth/login`, …; it
+streams `event` / `turn/completed` notifications and asks the client
+via `approval/request`). It looks for the CLI in `NOMAD_BIN`, the app
+bundle, then `~/go/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
+
 ## Non-interactive (headless)
 
 ```bash
@@ -156,6 +177,8 @@ under `~/.nomad/goals/`, so an active goal survives `/resume`.
 | --- | --- |
 | `cmd/nomad` | Entry point and flag parsing |
 | `internal/ark` | All Volcengine/Ark provider code: OAuth hosts, runtime/TOP endpoints, credentials, MA provisioning (env/agent/session), SSE worker, local tool gate, skill registration |
+| `internal/appserver` | stdio JSON-RPC server driving sessions for the macOS app |
+| `macos` | SwiftUI desktop client (`NomadUI` library + `Nomad` app) |
 | `internal/cli` | TUI, headless runner, `text/json/stream-json` renderers, slash commands, skill consent UI |
 | `internal/config` | Local file paths only (no provider domains) |
 | `internal/control` | Wires credentials, cached profile, client and runner |

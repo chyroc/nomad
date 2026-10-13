@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt clean install web
+.PHONY: build test vet fmt clean install web app app-test app-snapshot
 
 BIN := bin/nomad
 PKG := ./...
@@ -31,5 +31,14 @@ vet:
 fmt:
 	gofmt -w .
 
+app:
+	macos/build.sh
+
+app-test: build
+	cd macos && swift test
+
+app-snapshot:
+	cd macos && swift build && .build/debug/Nomad --snapshot ../bin/snapshots
+
 clean:
-	rm -rf bin
+	rm -rf bin macos/build
