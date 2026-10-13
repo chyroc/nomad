@@ -14,6 +14,7 @@ public enum Snapshot {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let scenarios: [(String, AppModel)] = [
             ("home", SampleData.home()),
+            ("home-noproject", SampleData.homeWithoutProject()),
             ("thread", SampleData.thread()),
             ("thread-live", SampleData.liveThread()),
             ("login", SampleData.login()),
@@ -95,12 +96,21 @@ public enum SampleData {
         } + [
             ThreadSummary(id: "b1", title: "Design the paywall screen", workspace: "/Users/demo/code/beadlet", updatedAt: now, running: false),
             ThreadSummary(id: "b2", title: "Localize onboarding copy", workspace: "/Users/demo/code/beadlet", updatedAt: now, running: false),
+            ThreadSummary(id: "c1", title: "解释一下 SSE 和 WebSocket 的区别", workspace: "/Users/demo/.nomad/chats", updatedAt: now, running: false),
+            ThreadSummary(id: "c2", title: "Draft a release note", workspace: "/Users/demo/.nomad/chats", updatedAt: now, running: false),
         ]
+        m.chatWorkspace = "/Users/demo/.nomad/chats"
         return m
     }
 
     public static func home() -> AppModel {
         base()
+    }
+
+    public static func homeWithoutProject() -> AppModel {
+        let m = base()
+        m.selectedProject = nil
+        return m
     }
 
     public static func login() -> AppModel {

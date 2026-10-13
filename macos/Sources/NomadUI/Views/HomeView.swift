@@ -65,9 +65,14 @@ struct HomeView: View {
                 Text(tr("What should we build?"))
                     .font(.system(size: 28))
                     .foregroundStyle(Theme.textPrimary)
-                Button(tr("Choose a project")) { model.pickProjectFolder() }
-                    .buttonStyle(.link)
-                    .font(.system(size: 14))
+                Menu {
+                    ProjectMenuItems()
+                } label: {
+                    Text(tr("Choose a project"))
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.accentBlue)
+                }
+                .plainMenu()
             }
         }
     }
@@ -75,13 +80,9 @@ struct HomeView: View {
     private var chipBar: some View {
         HStack(spacing: 22) {
             Menu {
-                ForEach(model.projects) { p in
-                    Button(p.name) { model.selectedProject = p.path }
-                }
-                Divider()
-                Button(tr("Open folder…")) { model.pickProjectFolder() }
+                ProjectMenuItems()
             } label: {
-                Chip(symbol: "folder", title: projectName ?? tr("Choose a project"))
+                Chip(symbol: "folder", title: projectName ?? tr("No project"))
             }
             .plainMenu()
             Chip(symbol: "laptopcomputer", title: tr("Local"))
@@ -127,11 +128,7 @@ struct ProjectPicker: View {
 
     var body: some View {
         Menu {
-            ForEach(model.projects) { p in
-                Button(p.name) { model.selectedProject = p.path }
-            }
-            Divider()
-            Button(tr("Open folder…")) { model.pickProjectFolder() }
+            ProjectMenuItems()
         } label: {
             Text(name)
                 .font(.system(size: 28))
@@ -144,6 +141,28 @@ struct ProjectPicker: View {
                 }
         }
         .plainMenu()
+    }
+}
+
+/// Project choices shared by every project picker, including "no project".
+struct ProjectMenuItems: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        ForEach(model.projects) { p in
+            Button {
+                model.selectedProject = p.path
+            } label: {
+                if model.selectedProject == p.path { Label(p.name, systemImage: "checkmark") } else { Text(p.name) }
+            }
+        }
+        Divider()
+        Button {
+            model.selectedProject = nil
+        } label: {
+            if model.selectedProject == nil { Label(tr("No project"), systemImage: "checkmark") } else { Text(tr("No project")) }
+        }
+        Button(tr("Open folder…")) { model.pickProjectFolder() }
     }
 }
 

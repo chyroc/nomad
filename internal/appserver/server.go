@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,10 @@ type Server struct {
 	backend Backend
 	store   *store.SessionStore
 	version string
+
+	// ChatDir is the workspace of threads started without a project;
+	// when empty, turn/start requires a workspace.
+	ChatDir string
 
 	wmu sync.Mutex
 	out io.Writer
@@ -249,11 +254,12 @@ func decode(params json.RawMessage, v any) error {
 func (s *Server) initialize() any {
 	st := s.backend.Status()
 	return map[string]any{
-		"version":  s.version,
-		"loggedIn": st.LoggedIn,
-		"model":    st.Model,
-		"effort":   st.Effort,
-		"efforts":  ark.EffortLadder,
+		"version":       s.version,
+		"chatWorkspace": s.ChatDir,
+		"loggedIn":      st.LoggedIn,
+		"model":         st.Model,
+		"effort":        st.Effort,
+		"efforts":       ark.EffortLadder,
 	}
 }
 
@@ -425,6 +431,12 @@ func (s *Server) claimThread(p turnStartParams) (*thread, error) {
 	}
 	if th.running {
 		return nil, errors.New("a turn is already running in this thread")
+	}
+	if th.workspace == "" && s.ChatDir != "" {
+		if err := os.MkdirAll(s.ChatDir, 0o700); err != nil {
+			return nil, err
+		}
+		th.workspace = s.ChatDir
 	}
 	if th.workspace == "" {
 		return nil, paramsError{errors.New("workspace is required")}

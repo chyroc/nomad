@@ -127,6 +127,15 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.conversations["n1"]?.turns.last?.interrupted, true)
     }
 
+    func testChatsWithoutProjectAreListedSeparately() {
+        let model = SampleData.home()
+        XCTAssertEqual(model.recentChats.map(\.id), ["c1", "c2"])
+        XCTAssertFalse(model.projects.contains { $0.path == model.chatWorkspace })
+        model.handleNotification("thread/started", Data(#"{"id":"c3","title":"hi","workspace":"/Users/demo/.nomad/chats","running":true}"#.utf8))
+        XCTAssertEqual(model.recentChats.first?.id, "c3")
+        XCTAssertFalse(model.projects.contains { $0.path == "/Users/demo/.nomad/chats" })
+    }
+
     func testApprovalRequestRepliesWithDecision() {
         let model = SampleData.home()
         let replied = expectation(description: "reply")

@@ -334,3 +334,36 @@ func TestInterruptCancelsTurn(t *testing.T) {
 		t.Fatalf("turn/completed = %s", seen[len(seen)-1].Params)
 	}
 }
+
+func TestTurnWithoutProjectUsesChatDir(t *testing.T) {
+	b := &fakeBackend{}
+	st, err := store.NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	srv := New(b, st, "test", outW)
+	srv.ChatDir = t.TempDir() + "/chats"
+	go func() { _ = srv.Serve(context.Background(), inR) }()
+	t.Cleanup(func() { _ = inW.Close() })
+	sc := bufio.NewScanner(outR)
+	c := &client{t: t, w: inW, r: sc}
+	id := c.call("initialize", nil)
+	seen := c.until(isResponse(id))
+	var init struct {
+		ChatWorkspace string `json:"chatWorkspace"`
+	}
+	_ = json.Unmarshal(seen[len(seen)-1].Result, &init)
+	if init.ChatWorkspace != srv.ChatDir {
+		t.Fatalf("chatWorkspace = %q", init.ChatWorkspace)
+	}
+	c.call("turn/start", map[string]any{"text": "hello"})
+	c.until(isMethod("turn/completed"))
+	if len(b.specs) != 1 || b.specs[0].Workspace != srv.ChatDir {
+		t.Fatalf("specs = %+v", b.specs)
+	}
+	if meta, _ := st.LoadMeta("sess-1"); meta.Workspace != srv.ChatDir {
+		t.Fatalf("meta = %+v", meta)
+	}
+}

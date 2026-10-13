@@ -43,6 +43,7 @@ enum L10n {
         "What should we build in %@?": "你想让我们在 %@ 中构建什么？",
         "What should we build?": "你想让我们构建什么？",
         "Choose a project": "选择项目",
+        "No project": "不使用项目",
         "Explore and understand code": "探索并理解代码",
         "Build a new feature, app or tool": "构建新功能、应用或工具",
         "Review code and suggest changes": "审查代码并提出修改建议",

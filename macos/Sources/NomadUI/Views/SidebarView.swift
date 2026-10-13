@@ -14,6 +14,7 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     navigation
                     projectsSection
+                    recentSection
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 16)
@@ -70,6 +71,33 @@ struct SidebarView: View {
             .padding(.top, 12)
             ForEach(model.projects) { project in
                 ProjectGroup(project: project)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var recentSection: some View {
+        let chats = model.recentChats
+        if !chats.isEmpty {
+            let showAll = model.expandedThreadLists.contains("recent")
+            VStack(alignment: .leading, spacing: 0) {
+                SectionHeader(title: tr("Recent")) { EmptyView() }
+                    .padding(.top, 12)
+                ForEach(showAll ? chats : Array(chats.prefix(10))) { t in
+                    SidebarRow(
+                        symbol: nil,
+                        title: t.title.isEmpty ? tr("New chat") : t.title,
+                        selected: model.currentThreadID == t.id,
+                        running: t.running == true || model.conversations[t.id]?.running == true
+                    ) {
+                        model.navigate(.thread(t.id))
+                    }
+                }
+                if chats.count > 10 {
+                    SidebarRow(symbol: nil, title: showAll ? tr("Show less") : tr("Show more"), selected: false, muted: true) {
+                        if showAll { model.expandedThreadLists.remove("recent") } else { model.expandedThreadLists.insert("recent") }
+                    }
+                }
             }
         }
     }

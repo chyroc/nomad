@@ -56,9 +56,15 @@ struct ThreadView: View {
         }
     }
 
+    private var isChat: Bool {
+        if let t = model.thread(threadID) { return model.isChat(t) }
+        let ws = conversation.workspace
+        return ws == nil || ws == model.chatWorkspace
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "folder")
+            Image(systemName: isChat ? "bubble.left" : "folder")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.icon)
             Text(model.title(for: threadID))

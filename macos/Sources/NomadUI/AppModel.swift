@@ -56,7 +56,8 @@ public final class AppModel: ObservableObject {
     @Published public var loggedIn = false
     @Published public var login = LoginState()
     @Published public var projects: [Project] = [] { didSet { persistProjects() } }
-    @Published public var selectedProject: String? { didSet { defaults.set(selectedProject, forKey: "selectedProject") } }
+    @Published public var selectedProject: String? { didSet { defaults.set(selectedProject ?? "", forKey: "selectedProject") } }
+    @Published public var chatWorkspace: String?
     @Published public var threads: [ThreadSummary] = []
     @Published public var route: Route = .home
     @Published public var conversations: [String: ConversationState] = [:]
@@ -84,7 +85,11 @@ public final class AppModel: ObservableObject {
         if let paths = defaults.stringArray(forKey: "projects") {
             projects = paths.map { Project(path: $0) }
         }
-        selectedProject = defaults.string(forKey: "selectedProject") ?? projects.first?.path
+        if let saved = defaults.string(forKey: "selectedProject") {
+            selectedProject = saved.isEmpty ? nil : saved
+        } else {
+            selectedProject = projects.first?.path
+        }
         if let raw = defaults.string(forKey: "permissionMode"), let mode = PermissionMode(rawValue: raw) {
             permission = mode
         }
@@ -131,6 +136,7 @@ public final class AppModel: ObservableObject {
         var model: String
         var effort: String
         var efforts: [String]?
+        var chatWorkspace: String?
     }
 
     private func initialize() async {
@@ -141,6 +147,7 @@ public final class AppModel: ObservableObject {
             model = res.model
             if !res.effort.isEmpty { effort = res.effort }
             if let e = res.efforts, !e.isEmpty { efforts = e.filter { $0 != "none" } }
+            if let w = res.chatWorkspace, !w.isEmpty { chatWorkspace = w }
             connection = .ready
             await refreshThreads()
             for p in projects { refreshBranch(p.path) }
@@ -161,11 +168,10 @@ public final class AppModel: ObservableObject {
             if running.contains(t.id) || conversations[t.id]?.running == true { t.running = true }
             return t
         }
-        for t in res.threads where !t.workspace.isEmpty && !projects.contains(where: { $0.path == t.workspace }) {
+        for t in res.threads where !isChat(t) && !projects.contains(where: { $0.path == t.workspace }) {
             projects.append(Project(path: t.workspace))
             refreshBranch(t.workspace)
         }
-        if selectedProject == nil { selectedProject = projects.first?.path }
     }
 
     private struct ModelList: Decodable {
@@ -237,6 +243,16 @@ public final class AppModel: ObservableObject {
 
     public func threads(in project: String) -> [ThreadSummary] {
         threads.filter { $0.workspace == project }
+    }
+
+    /// Whether a thread was started without a project.
+    public func isChat(_ t: ThreadSummary) -> Bool {
+        t.workspace.isEmpty || t.workspace == chatWorkspace
+    }
+
+    /// Threads started without a project, newest first.
+    public var recentChats: [ThreadSummary] {
+        threads.filter(isChat)
     }
 
     private struct ReadResult: Decodable {
@@ -312,12 +328,8 @@ public final class AppModel: ObservableObject {
         if !images.isEmpty { params["images"] = images.map(\.path) }
         switch route {
         case .home:
-            guard let workspace = selectedProject else {
-                pickProjectFolder()
-                drafts["home"] = raw
-                return
-            }
-            params["workspace"] = workspace
+            let workspace = selectedProject
+            if let workspace { params["workspace"] = workspace }
             let key = "pending:" + UUID().uuidString
             var conv = ConversationState()
             conv.pendingUser = text
@@ -488,7 +500,7 @@ public final class AppModel: ObservableObject {
             if !threads.contains(where: { $0.id == t.id }) {
                 threads.insert(t, at: 0)
             }
-            if !t.workspace.isEmpty && !projects.contains(where: { $0.path == t.workspace }) {
+            if !isChat(t) && !projects.contains(where: { $0.path == t.workspace }) {
                 projects.insert(Project(path: t.workspace), at: 0)
             }
             conversations[t.id, default: ConversationState()].running = true
