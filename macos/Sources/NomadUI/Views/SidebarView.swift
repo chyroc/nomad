@@ -33,8 +33,8 @@ struct SidebarView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text("Nomad")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(Color(hex: 0x262626))
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -67,7 +67,7 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
                 .help(tr("Add project"))
             }
-            .padding(.top, 20)
+            .padding(.top, 12)
             ForEach(model.projects) { project in
                 ProjectGroup(project: project)
             }
@@ -126,17 +126,17 @@ struct SidebarRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if let glyph {
-                    GlyphView(glyph: glyph, size: 15)
+                    GlyphView(glyph: glyph, size: 14, color: Theme.sidebarIcon)
                         .frame(width: 16)
                 } else if let symbol {
                     Image(systemName: symbol)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.icon)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.sidebarIcon)
                         .frame(width: 16)
                 }
                 Text(title)
                     .font(Theme.sidebarFont)
-                    .foregroundStyle(muted ? Theme.textTertiary : Theme.textPrimary)
+                    .foregroundStyle(muted ? Theme.textTertiary : Theme.sidebarText)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)

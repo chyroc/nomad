@@ -20,8 +20,8 @@ struct ComposerView: View {
             ZStack(alignment: .topLeading) {
                 if model.draft.isEmpty {
                     Text(placeholder)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.textTertiary.opacity(0.85))
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(Color(hex: 0xB8B8BA))
                         .allowsHitTesting(false)
                 }
                 ComposerTextView(
@@ -146,9 +146,9 @@ struct PermissionMenu: View {
             let color = model.permission == .full ? Theme.accentOrange : Theme.textSecondary
             HStack(spacing: 4) {
                 Image(systemName: model.permission.symbol)
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 12))
                 Text(model.permission.title)
-                    .font(.system(size: 14))
+                    .font(.system(size: 13))
             }
             .foregroundStyle(color)
             .padding(.horizontal, 6)
@@ -192,7 +192,7 @@ struct ModelMenu: View {
                 Text(model.modelLabel)
                 Text(EffortLabel.title(model.effort))
             }
-            .font(.system(size: 14))
+            .font(.system(size: 13))
             .foregroundStyle(Theme.textTertiary)
             .padding(.horizontal, 6)
             .frame(height: 26)
@@ -219,7 +219,7 @@ struct ComposerTextView: NSViewRepresentable {
         tv.isRichText = false
         tv.importsGraphics = false
         tv.allowsUndo = true
-        tv.font = .systemFont(ofSize: 14)
+        tv.font = .systemFont(ofSize: 13.5)
         tv.textColor = NSColor(Theme.textPrimary)
         tv.insertionPointColor = NSColor(Theme.textPrimary)
         tv.drawsBackground = false

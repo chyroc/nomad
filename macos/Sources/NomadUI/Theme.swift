@@ -26,6 +26,8 @@ public enum Theme {
     static let textTertiary = Color(hex: 0x8F8F8F)
     static let textSection = Color(hex: 0xA8A9A9)
     static let icon = Color(hex: 0x6B6B6B)
+    static let sidebarIcon = Color(hex: 0x3F3F3F)
+    static let sidebarText = Color(hex: 0x1F1F1F)
     static let iconMuted = Color(hex: 0x9A9A9A)
 
     static let accentOrange = Color(hex: 0xE25507)
@@ -35,10 +37,10 @@ public enum Theme {
     static let accentRed = Color(hex: 0xE5484D)
     static let diffAdd = Color(hex: 0x1A9F4B)
     static let diffDel = Color(hex: 0xD93F3F)
-    static let sendDisabled = Color(hex: 0xB4B4B4)
+    static let sendDisabled = Color(hex: 0x8E8E90)
     static let sendEnabled = Color(hex: 0x1A1C1F)
 
-    static let messageSize: CGFloat = 13
+    static let messageSize: CGFloat = 14
     static let sidebarFont = Font.system(size: 14)
     static let sectionFont = Font.system(size: 13)
     static let bodyFont = Font.system(size: 14)

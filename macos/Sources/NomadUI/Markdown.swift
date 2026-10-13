@@ -137,6 +137,7 @@ public enum MarkdownParser {
         var out = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
         out.font = .system(size: size)
         out.foregroundColor = color
+        var codeRanges: [Range<AttributedString.Index>] = []
         for run in out.runs {
             guard let intent = run.inlinePresentationIntent else {
                 if run.link != nil { out[run.range].foregroundColor = Theme.accentBlue }
@@ -144,13 +145,22 @@ public enum MarkdownParser {
             }
             if intent.contains(.code) {
                 out[run.range].font = .system(size: size - 1.5, design: .monospaced)
+                out[run.range].foregroundColor = Color(hex: 0x3A3A3A)
                 out[run.range].backgroundColor = Theme.inlineCode
+                codeRanges.append(run.range)
             } else if intent.contains(.stronglyEmphasized) {
                 out[run.range].font = .system(size: size, weight: .semibold)
             } else if intent.contains(.emphasized) {
                 out[run.range].font = .system(size: size).italic()
             }
             if run.link != nil { out[run.range].foregroundColor = Theme.accentBlue }
+        }
+        for range in codeRanges.reversed() {
+            var pad = AttributedString("\u{2009}")
+            pad.font = .system(size: size)
+            pad.backgroundColor = Theme.inlineCode
+            out.insert(pad, at: range.upperBound)
+            out.insert(pad, at: range.lowerBound)
         }
         return out
     }
@@ -177,13 +187,13 @@ struct MarkdownView: View {
     static func gap(_ prev: MarkdownBlock, _ next: MarkdownBlock) -> CGFloat {
         switch (prev, next) {
         case (.listItem, .listItem): return 0
-        case (.paragraph, .listItem): return 2
-        case (.listItem, _): return 7
+        case (.paragraph, .listItem): return 5
+        case (.listItem, _): return 8
         default: return 14
         }
     }
 
-    private var lineSpacing: CGFloat { size * 0.42 }
+    private var lineSpacing: CGFloat { size * 0.33 }
 
     @ViewBuilder
     private func blockView(_ block: MarkdownBlock) -> some View {

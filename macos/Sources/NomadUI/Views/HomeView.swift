@@ -108,15 +108,15 @@ struct Chip: View {
     var body: some View {
         HStack(spacing: 7) {
             if let glyph {
-                GlyphView(glyph: glyph, size: 15)
+                GlyphView(glyph: glyph, size: 13.5, color: Theme.sidebarIcon)
             } else if let symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.sidebarIcon)
             }
             Text(title)
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textPrimary)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.sidebarText)
         }
     }
 }
